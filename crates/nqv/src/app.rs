@@ -6,9 +6,9 @@ use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
-    Catalog, Cond, ContourSpec, Kind, Mask, RangeEstimate, Segment, Series, SeriesSpec, Show,
-    VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours, fit_size, masked,
-    netcdf_files, range, series, series_range, value, view,
+    Catalog, Cond, ContourLine, ContourSpec, Kind, Mask, RangeEstimate, Segment, Series,
+    SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours,
+    fit_size, masked, netcdf_files, range, series, series_range, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines};
 use ratatui::DefaultTerminal;
@@ -605,13 +605,17 @@ impl App {
     }
 
     /// Contour segments over the map `spec`, if contours are on; errors leave them out.
-    fn contour_segments(&self, spec: &ViewSpec) -> Vec<Segment> {
+    fn contour_lines(&self, spec: &ViewSpec) -> Vec<ContourLine> {
         let Some(c) = &self.active_contour else {
             return vec![];
         };
-        contours(&self.cat, spec, c)
-            .map(|lines| lines.into_iter().flat_map(|l| l.segments).collect())
-            .unwrap_or_default()
+        contours(&self.cat, spec, c).unwrap_or_default()
+    }
+
+    /// All segments of the contour lines over the map `spec`.
+    fn contour_segments(&self, spec: &ViewSpec) -> Vec<Segment> {
+        let lines = self.contour_lines(spec);
+        lines.into_iter().flat_map(|l| l.segments).collect()
     }
 
     /// Variable named exactly `name` (or `file:name`), preferring the current file.
@@ -1008,7 +1012,12 @@ impl App {
                 let rg = range(&self.cat, &spec)?;
                 let norm = self.norm(rg.min, rg.max);
                 let mut image = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
-                draw_lines(&mut image, &self.contour_segments(&spec));
+                let lines = self.contour_lines(&spec);
+                let segments: Vec<Segment> = lines
+                    .iter()
+                    .flat_map(|l| l.segments.iter().copied())
+                    .collect();
+                draw_lines(&mut image, &segments);
                 // Round coordinate values (or 1-based indices) as ticks, placed linearly
                 // between the cells shown at the two ends of each edge (regular grids).
                 let at = |k: usize, i: usize| {
@@ -1050,6 +1059,7 @@ impl App {
                     ylabel: label(y),
                     norm,
                     cmap,
+                    contours: &lines,
                 })
             }
             Kind::Series { along } => {

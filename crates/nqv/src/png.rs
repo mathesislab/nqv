@@ -3,7 +3,7 @@
 
 use font8x8::{BASIC_FONTS, LATIN_FONTS, UnicodeFonts};
 use image::{Rgba as Px, RgbaImage};
-use nqv_core::{Series, nice_ticks};
+use nqv_core::{ContourLine, Series, nice_ticks};
 use nqv_render::{Cmap, Norm, Rgba};
 
 use crate::ui::fmt;
@@ -90,19 +90,24 @@ impl Canvas {
 
     /// Text with its top-left corner at (x, y); unknown characters show as '?'.
     fn text(&mut self, x: i64, y: i64, s: &str, c: Px<u8>) {
+        self.text_scaled(x, y, s, SCALE, c);
+    }
+
+    /// Text at `scale` times the 8x8 font.
+    fn text_scaled(&mut self, x: i64, y: i64, s: &str, scale: u32, c: Px<u8>) {
         for (n, ch) in s.chars().enumerate() {
             let glyph = BASIC_FONTS
                 .get(ch)
                 .or_else(|| LATIN_FONTS.get(ch))
                 .or_else(|| BASIC_FONTS.get('?'))
                 .unwrap_or([0; 8]);
-            let gx = x + (n as u32 * GLYPH) as i64;
+            let gx = x + (n as u32 * 8 * scale) as i64;
             for (row, bits) in glyph.iter().enumerate() {
                 for col in 0..8 {
                     if bits & (1 << col) != 0 {
-                        for (i, j) in (0..SCALE).flat_map(|i| (0..SCALE).map(move |j| (i, j))) {
-                            let px = gx + (col * SCALE + i) as i64;
-                            let py = y + (row as u32 * SCALE + j) as i64;
+                        for (i, j) in (0..scale).flat_map(|i| (0..scale).map(move |j| (i, j))) {
+                            let px = gx + (col * scale + i) as i64;
+                            let py = y + (row as u32 * scale + j) as i64;
                             self.put(px, py, c);
                         }
                     }
@@ -147,6 +152,8 @@ pub struct MapPlot<'a> {
     pub ylabel: String,
     pub norm: Norm,
     pub cmap: &'a Cmap,
+    /// Contour lines (already drawn into `image`), for their labels.
+    pub contours: &'a [ContourLine],
 }
 
 pub fn render_map(p: &MapPlot) -> RgbaImage {
@@ -183,11 +190,89 @@ pub fn render_map(p: &MapPlot) -> RgbaImage {
     }
     c.frame(LEFT, bar, w, GLYPH, BLACK);
     let ly = (bar + GLYPH + 6) as i64;
-    let mid = 0.5 * (p.norm.min + p.norm.max);
-    c.text(LEFT as i64, ly, &fmt(p.norm.min), BLACK);
-    c.text_centred((LEFT + w / 2) as i64, ly, &fmt(mid), BLACK);
-    c.text_right((LEFT + w) as i64, ly, &fmt(p.norm.max), BLACK);
+    let mut right_end = i64::MIN;
+    for (t, label) in bar_ticks(&p.norm) {
+        let x = (LEFT as f32 + t * (w - 1) as f32).round() as i64;
+        c.rect(x as u32, bar + GLYPH, 1, 4, BLACK);
+        // Centred, but kept inside the bar's width and clear of the previous label.
+        let tw = text_width(&label) as i64;
+        let left = (x - tw / 2).clamp(LEFT as i64, (LEFT + w) as i64 - tw);
+        if left > right_end + 8 {
+            c.text(left, ly, &label, BLACK);
+            right_end = left + tw;
+        }
+    }
+    for (x, y, label) in contour_labels(p.contours, w, h) {
+        let tw = (label.chars().count() * 8) as i64;
+        let (bx, by) = (
+            (LEFT as f32 + x) as i64 - tw / 2 - 2,
+            (TOP as f32 + y) as i64 - 6,
+        );
+        c.rect(
+            bx.max(0) as u32,
+            by.max(0) as u32,
+            tw as u32 + 4,
+            12,
+            Px([255, 255, 255, 255]),
+        );
+        c.text_scaled(bx + 2, by + 2, &label, 1, BLACK);
+    }
     c.img
+}
+
+/// Colour bar ticks as (position 0..1, label): round values on a linear scale, powers
+/// of ten (with 2 and 5 times them over short ranges) on a log scale; the ends if none.
+pub fn bar_ticks(n: &Norm) -> Vec<(f32, String)> {
+    let (lo, hi) = (n.min as f64, n.max as f64);
+    let values: Vec<f64> = if n.log {
+        let decades = (lo.log10().ceil() as i32)..=(hi.log10().floor() as i32);
+        let mults: &[f64] = if hi / lo < 100.0 {
+            &[1.0, 2.0, 5.0]
+        } else {
+            &[1.0]
+        };
+        decades
+            .flat_map(|k| mults.iter().map(move |m| m * 10f64.powi(k)))
+            .filter(|v| (lo..=hi).contains(v))
+            .collect()
+    } else {
+        nice_ticks(lo, hi, 5)
+    };
+    let values = if values.len() < 2 {
+        vec![lo, hi]
+    } else {
+        values
+    };
+    values
+        .into_iter()
+        .map(|v| (n.apply(v as f32), fmt(v as f32)))
+        .collect()
+}
+
+/// Up to three labels per contour level, at segment midpoints inside the `w` by `h`
+/// map and at least 120 pixels from any other label: (x, y, text).
+fn contour_labels(lines: &[ContourLine], w: u32, h: u32) -> Vec<(f32, f32, String)> {
+    let mut out: Vec<(f32, f32, String)> = vec![];
+    for line in lines {
+        let text = fmt(line.level as f32);
+        let half = (text.chars().count() * 4 + 4) as f32;
+        let mut n = 0;
+        for [a, b] in &line.segments {
+            let (x, y) = (0.5 * (a.0 + b.0), 0.5 * (a.1 + b.1));
+            let inside = x > half && x < w as f32 - half && y > 8.0 && y < h as f32 - 8.0;
+            let clear = out
+                .iter()
+                .all(|(ox, oy, _)| (ox - x).hypot(oy - y) >= 120.0);
+            if inside && clear {
+                out.push((x, y, text.clone()));
+                n += 1;
+                if n == 3 {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 pub struct LinePlot<'a> {
@@ -268,6 +353,22 @@ fn widen(a: f64, b: f64) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colour_bar_ticks() {
+        let t: Vec<String> = bar_ticks(&Norm::log(0.3, 3000.0))
+            .into_iter()
+            .map(|t| t.1)
+            .collect();
+        assert_eq!(t, ["1", "10", "100", "1000"]);
+        let t: Vec<String> = bar_ticks(&Norm::linear(0.0, 300.0))
+            .into_iter()
+            .map(|t| t.1)
+            .collect();
+        assert_eq!(t, ["0", "50", "100", "150", "200", "250", "300"]);
+        let p = bar_ticks(&Norm::log(1.0, 100.0));
+        assert!((p.iter().find(|t| t.1 == "10").unwrap().0 - 0.5).abs() < 1e-6);
+    }
 
     #[test]
     fn text_draws_pixels() {
