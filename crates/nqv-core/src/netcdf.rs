@@ -74,6 +74,7 @@ fn var_info(v: &NcVariable) -> VarInfo {
             .map(|d| DimInfo {
                 name: d.name.clone(),
                 len: d.size as usize,
+                unlimited: d.is_unlimited,
             })
             .collect(),
         long_name: text("long_name"),

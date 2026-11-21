@@ -1,6 +1,7 @@
 //! nqv-core: data access and view extraction. No display code.
 
 mod catalog;
+mod join;
 mod netcdf;
 mod view;
 
@@ -9,6 +10,7 @@ use anyhow::Result;
 pub use crate::catalog::{
     Catalog, DirEntry, Other, Show, Source, VarRef, is_netcdf, list_dir, netcdf_files,
 };
+pub use crate::join::{JoinedReader, record_dim};
 pub use crate::netcdf::NetcdfReader;
 pub use crate::view::{
     RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, cell_at, finite_range, fit_size, range,
@@ -31,6 +33,8 @@ pub enum Kind {
 pub struct DimInfo {
     pub name: String,
     pub len: usize,
+    /// The record dimension, which can grow (and along which files are joined).
+    pub unlimited: bool,
 }
 
 /// Metadata of a numeric variable.

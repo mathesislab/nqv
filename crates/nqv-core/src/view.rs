@@ -347,6 +347,7 @@ mod tests {
             let d = |n: &str, len| DimInfo {
                 name: n.into(),
                 len,
+                unlimited: false,
             };
             let v = |n: &str, dims| VarInfo {
                 name: n.into(),
