@@ -7,7 +7,7 @@ Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (
 ## Use
 
 ```bash
-nqv [--diff] [PATH...] [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
+nqv [--diff] [PATH...] [-v VAR] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 ```
 
 Without a path, `nqv` opens a file browser on the current folder.

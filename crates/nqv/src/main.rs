@@ -22,12 +22,14 @@ use crate::app::App;
     after_help = "PATH: one file, or any number of files and folders (all NetCDF files in \
 the folders), opened together.\n\
 With --diff: two files or two folders, compared as first minus second (files in folders \
-paired by name).\n\
-A last argument that is not an existing path is taken as the variable to show first."
+paired by name)."
 )]
 struct Args {
-    /// Files or folders, optionally followed by a variable name; none opens the file browser
+    /// Files or folders; none opens the file browser
     paths: Vec<PathBuf>,
+    /// Variable to show first
+    #[arg(short, long)]
+    var: Option<String>,
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum)]
     gfx: Option<Gfx>,
@@ -79,7 +81,8 @@ fn main() -> Result<()> {
         },
         _ => Gfx::Auto,
     };
-    let (paths, var) = split_var(args.paths);
+    let paths = args.paths;
+    let var = args.var;
     // Open before taking over the terminal, so errors print plainly.
     let app = match paths.is_empty() {
         true => None,
@@ -107,21 +110,13 @@ fn main() -> Result<()> {
 }
 
 fn open(paths: &[PathBuf], diff: bool) -> Result<Catalog> {
+    if let Some(p) = paths.iter().find(|p| !p.exists()) {
+        bail!("{}: no such file or folder", p.display());
+    }
     match (diff, paths) {
         (false, _) => Catalog::open(paths),
         (true, [a, b]) => Catalog::compare(a, b),
         (true, _) => bail!("--diff needs two files or two folders"),
-    }
-}
-
-/// Take a trailing argument that is not an existing path as a variable name.
-fn split_var(mut paths: Vec<PathBuf>) -> (Vec<PathBuf>, Option<String>) {
-    match paths.last() {
-        Some(p) if paths.len() > 1 && !p.exists() => {
-            let var = paths.pop().map(|p| p.to_string_lossy().into_owned());
-            (paths, var)
-        }
-        _ => (paths, None),
     }
 }
 
