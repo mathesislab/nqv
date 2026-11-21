@@ -1,6 +1,6 @@
 {
   "name": "nqv-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Quick-look viewer for NetCDF files: desktop app on the nqv session",
   "type": "module",
   "private": true,
