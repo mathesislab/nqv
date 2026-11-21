@@ -99,6 +99,68 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
     if app.picker.is_some() {
         draw_picker(f, app);
     }
+    if app.help {
+        draw_help(f);
+    }
+}
+
+/// Keys of the viewer, for the help overlay.
+const KEYS: &[(&str, &str)] = &[
+    ("← → Home End", "first stepped dimension (usually time)"),
+    ("↑ ↓", "second stepped dimension (e.g. level)"),
+    (
+        "click",
+        "value at a map cell, and its series below the map; Esc closes",
+    ),
+    (
+        "v",
+        "variable picker: type to filter (fuzzy, file:var), ↑↓, Enter",
+    ),
+    ("c / r", "next colour map / range auto <-> symmetric"),
+    ("d", "comparison: A - B, A, B"),
+    ("o / O", "file browser / open the folder as a collection"),
+    ("[ ]", "previous / next file"),
+    (":", "command line (below)"),
+    (
+        "p",
+        "show the command line for this view (also saved to ~/.cache/nqv/last-command)",
+    ),
+    ("q / Esc", "quit"),
+];
+
+fn draw_help(f: &mut Frame) {
+    let mut lines = vec![Line::raw("Keys").bold()];
+    for (k, what) in KEYS {
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {k:<14}")).bold(),
+            Span::raw(*what),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::raw("Commands after :  (flag)").bold());
+    for (cmd, flag, what) in command::COMMANDS {
+        lines.push(Line::from(vec![
+            Span::raw(format!("  {cmd:<36}")).bold(),
+            Span::raw(format!("{flag:<18}")).dim(),
+            Span::raw(*what),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(
+        Line::raw("VALUE: coordinate value (1990, -21000)   @INDEX: 1-based, @-1 last").dim(),
+    );
+    lines.push(Line::raw("any key closes; nqv --help has examples").dim());
+    let area = f.area();
+    let r = centered(
+        area,
+        110.min(area.width),
+        (lines.len() as u16 + 2).min(area.height),
+    );
+    f.render_widget(Clear, r);
+    f.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(" nqv help ")),
+        r,
+    );
 }
 
 /// Series of the current variable along dimension `along`, or the error reading it,

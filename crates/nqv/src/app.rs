@@ -16,7 +16,7 @@ use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
 use crate::browser::{Action, Browser};
-use crate::command::{self, Command, MaskCond, RangeMode};
+use crate::command::{self, Command, MaskCond, RangeMode, TimeSel};
 use crate::fuzzy;
 use crate::ui;
 
@@ -69,7 +69,19 @@ pub struct VarPicker {
     pub sel: usize,
 }
 
+/// How the current files were opened, for the command line that reproduces the view.
+#[derive(Debug, Clone, Default)]
+pub struct Origin {
+    pub paths: Vec<PathBuf>,
+    pub diff: bool,
+    pub join: bool,
+    pub join_dim: Option<String>,
+}
+
 pub struct App {
+    pub origin: Origin,
+    /// Key and command overview, drawn over everything else.
+    pub help: bool,
     pub cat: Catalog,
     pub var: VarRef,
     /// One index per dimension of `var`; entries at shown dimensions are unused.
@@ -136,6 +148,8 @@ impl App {
             mask: vec![],
             active_mask: Mask::default(),
             mask_error: None,
+            origin: Origin::default(),
+            help: false,
             frame: None,
             probe: None,
             panel: None,
@@ -180,6 +194,7 @@ impl App {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
                     self.message = None;
                     if !self.handle_key(k.code) {
+                        self.save_command();
                         return Ok(());
                     }
                 }
@@ -206,6 +221,11 @@ impl App {
         else {
             return;
         };
+        self.probe_cell(cell);
+    }
+
+    /// Show the value at map cell `cell` (y, x indices) and the series there.
+    fn probe_cell(&mut self, cell: (usize, usize)) {
         let Kind::Map { y, x } = self.var_info().kind() else {
             return;
         };
@@ -268,6 +288,11 @@ impl App {
             }
             return true;
         }
+        if self.help {
+            self.help = false;
+            self.clear = true;
+            return true;
+        }
         if let Some(p) = &mut self.picker {
             let names = filtered_vars(&self.cat, &p.query);
             match code {
@@ -327,6 +352,8 @@ impl App {
                 }
             }
             KeyCode::Char(':') => self.cmdline = Some(String::new()),
+            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('p') => self.message = Some(self.command_line()),
             KeyCode::Char('d') if self.cat.compare => {
                 self.cat.show = match self.cat.show {
                     Show::Diff => Show::A,
@@ -356,6 +383,12 @@ impl App {
     /// On failure the message goes to the browser if it is open.
     fn open_paths(&mut self, paths: &[PathBuf]) {
         let res = Catalog::open(paths).and_then(|cat| self.switch(cat));
+        if res.is_ok() {
+            self.origin = Origin {
+                paths: paths.to_vec(),
+                ..Origin::default()
+            };
+        }
         if let Err(e) = res {
             let m = Some(format!("{e:#}"));
             match &mut self.browser {
@@ -460,7 +493,10 @@ impl App {
                 Action::Close => return Ok(None),
                 Action::Open(paths) => {
                     match Catalog::open(&paths).and_then(|c| App::new(c, None)) {
-                        Ok(app) => return Ok(Some(app)),
+                        Ok(mut app) => {
+                            app.origin.paths = paths;
+                            return Ok(Some(app));
+                        }
                         Err(e) => b.message = Some(format!("{e:#}")),
                     }
                 }
@@ -665,8 +701,199 @@ impl App {
                     p.at.clear();
                 }
             }
+            Command::At(dim, pos) => self.set_at(&dim, pos)?,
+            Command::Cmap(name) => {
+                let Some(i) = CMAPS
+                    .iter()
+                    .position(|c| c.name.eq_ignore_ascii_case(&name))
+                else {
+                    let names: Vec<&str> = CMAPS.iter().map(|c| c.name).collect();
+                    return Err(format!(
+                        "cmap: '{name}' unknown; one of {}",
+                        names.join(", ")
+                    ));
+                };
+                self.cmap = i;
+            }
+            Command::Show(show) => {
+                if !self.cat.compare {
+                    return Err("show: only in a comparison (--diff)".into());
+                }
+                self.cat.show = show;
+                (self.cmap, self.range_mode) = colour_defaults(show);
+                self.probe = None;
+                self.clear = true;
+            }
         }
         Ok(false)
+    }
+
+    /// Position along dimension `dim`: a step for stepped dimensions, the clicked cell
+    /// for map dimensions (the other map dimension stays, or starts in the middle).
+    fn set_at(&mut self, dim: &str, pos: TimeSel) -> Result<(), String> {
+        let v = self.var_info();
+        let Some(k) = v.dims.iter().position(|d| d.name == dim) else {
+            let names: Vec<&str> = v.dims.iter().map(|d| d.name.as_str()).collect();
+            return Err(format!(
+                "at: '{}' has no dimension '{dim}' (it has {})",
+                v.name,
+                names.join(", ")
+            ));
+        };
+        let d = &v.dims[k];
+        let coord = self.cat.coord(self.var.source, d);
+        let i = command::time_index(pos, d.len, coord.as_deref())
+            .map_err(|e| format!("at: {dim}: {e}"))?;
+        match v.kind() {
+            Kind::Map { y, x } if k == y || k == x => {
+                let mid = (v.dims[y].len / 2, v.dims[x].len / 2);
+                let mut cell = self.probe.as_ref().map_or(mid, |p| p.cell);
+                if k == y {
+                    cell.0 = i;
+                } else {
+                    cell.1 = i;
+                }
+                self.probe_cell(cell);
+            }
+            Kind::Series { along } if k == along => {
+                return Err(format!("at: '{dim}' is the plotted dimension"));
+            }
+            _ => self.index[k] = i,
+        }
+        Ok(())
+    }
+
+    /// The command line that opens this view: files, variable, steps, clicked cell,
+    /// comparison side, colours and mask. Settings at their defaults are left out.
+    pub fn command_line(&self) -> String {
+        let mut a: Vec<String> = vec!["nqv".into()];
+        let o = &self.origin;
+        if o.diff {
+            a.push("--diff".into());
+        }
+        if o.join {
+            a.push("-j".into());
+        }
+        if let Some(d) = &o.join_dim {
+            a.extend(["--join-dim".into(), d.clone()]);
+        }
+        a.extend(o.paths.iter().map(|p| p.display().to_string()));
+        let v = self.var_info();
+        let var = match self.cat.sources.len() {
+            1 => v.name.clone(),
+            _ => {
+                let file = self.cat.sources[self.var.source].path.file_name();
+                let file = file
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                format!("{file}:{}", v.name)
+            }
+        };
+        a.extend(["-v".into(), var]);
+        for (n, &k) in v.step_dims().iter().enumerate() {
+            if self.index[k] == 0 {
+                continue;
+            }
+            let at = format!("@{}", self.index[k] + 1);
+            match n {
+                0 => a.extend(["-t".into(), at]),
+                _ => a.extend(["--at".into(), format!("{}={at}", v.dims[k].name)]),
+            }
+        }
+        if let (Some(p), Kind::Map { y, x }) = (&self.probe, v.kind()) {
+            for (k, i) in [(y, p.cell.0), (x, p.cell.1)] {
+                a.extend(["--at".into(), format!("{}=@{}", v.dims[k].name, i + 1)]);
+            }
+        }
+        let show = if self.cat.compare {
+            self.cat.show
+        } else {
+            Show::A
+        };
+        if self.cat.compare && show != Show::Diff {
+            a.extend([
+                "--show".into(),
+                if show == Show::A { "a" } else { "b" }.into(),
+            ]);
+        }
+        let (cmap, range) = colour_defaults(show);
+        if self.cmap != cmap {
+            a.extend(["--cmap".into(), CMAPS[self.cmap].name.into()]);
+        }
+        if self.range_mode != range {
+            let r = match self.range_mode {
+                RangeMode::Auto => "auto".into(),
+                RangeMode::Symmetric => "sym".into(),
+                RangeMode::Fixed(lo, hi) => format!("{lo},{hi}"),
+            };
+            a.extend(["--range".into(), r]);
+        }
+        if !self.mask.is_empty() {
+            let m: Vec<String> = self.mask.iter().map(|c| c.text()).collect();
+            a.extend(["--mask".into(), m.join(" and ")]);
+        }
+        let quoted: Vec<String> = a.iter().map(|s| command::shell_quote(s)).collect();
+        quoted.join(" ")
+    }
+
+    /// Keep the command for the last view in ~/.cache/nqv/last-command; errors are ignored.
+    fn save_command(&self) {
+        if let Some(home) = std::env::var_os("HOME") {
+            let dir = PathBuf::from(home).join(".cache/nqv");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(dir.join("last-command"), self.command_line() + "\n");
+        }
+    }
+
+    /// Write the current map as a PNG of at most `max` pixels (data aspect kept, small
+    /// grids scaled up), with a colour bar strip below. Returns a one-line summary.
+    pub fn write_png(&mut self, path: &Path, max: (u32, u32)) -> Result<String> {
+        self.update_mask();
+        if let Some(e) = &self.mask_error {
+            bail!("{e}");
+        }
+        let v = self.var_info().clone();
+        let Kind::Map { y, x } = v.kind() else {
+            bail!(
+                "--png: '{}' is not a map; only maps can be written for now",
+                v.name
+            );
+        };
+        let spec = ViewSpec {
+            var: self.var.clone(),
+            index: self.index.clone(),
+            size: fit_size(v.dims[x].len.max(1), v.dims[y].len.max(1), max.0, max.1),
+            mask: self.active_mask.clone(),
+        };
+        let raster = view(&self.cat, &spec)?;
+        let rg = range(&self.cat, &spec)?;
+        let norm = self.norm(rg.min, rg.max);
+        let cmap = &CMAPS[self.cmap];
+        let map = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
+        // Map, a white gap, then a colour bar 16 px high across the full width.
+        let (w, h, gap, bar) = (map.w, map.h, 6, 16);
+        let mut img = RgbaImage::from_pixel(w, h + gap + bar, image::Rgba([255, 255, 255, 255]));
+        for (i, px) in map.data.as_chunks::<4>().0.iter().enumerate() {
+            let (cx, cy) = (i as u32 % w, i as u32 / w);
+            img.put_pixel(cx, cy, image::Rgba([px[0], px[1], px[2], px[3]]));
+        }
+        for cx in 0..w {
+            let c = cmap.at((cx as f32 + 0.5) / w as f32);
+            for cy in h + gap..h + gap + bar {
+                img.put_pixel(cx, cy, image::Rgba([c[0], c[1], c[2], 255]));
+            }
+        }
+        img.save_with_format(path, image::ImageFormat::Png)?;
+        Ok(format!(
+            "wrote {} ({w}x{}): {}:{}  colour bar [{}, {}] {}",
+            path.display(),
+            h + gap + bar,
+            self.cat.label(self.var.source),
+            v.name,
+            norm.min,
+            norm.max,
+            cmap.name
+        ))
     }
 
     fn map(

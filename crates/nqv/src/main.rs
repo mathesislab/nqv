@@ -16,47 +16,126 @@ use crossterm::execute;
 use nqv_core::Catalog;
 use ratatui_image::picker::{Picker, ProtocolType};
 
-use crate::app::App;
+use crate::app::{App, Origin};
 use crate::command::Command;
 
 #[derive(Parser)]
-#[command(version, about = "Quick-look viewer for NetCDF files")]
 #[command(
-    after_help = "PATH: one file, or any number of files and folders (all NetCDF files in \
-the folders), opened together.\n\
-With --diff: two files or two folders, compared as first minus second (files in folders \
-paired by name).\n\
-With --join: the files joined along time (the record dimension) into one; for folders, \
-the files of the same name across them joined, e.g. restart segments."
+    version,
+    about = "Quick-look viewer for NetCDF files, in any terminal",
+    long_about = "Quick-look viewer for NetCDF files, in any terminal. Everything the viewer \
+shows can also be set here, and `p` in the viewer prints the command for the current view.",
+    after_help = "Run with --help for value syntax and examples.",
+    after_long_help = AFTER_LONG_HELP
 )]
 struct Args {
     /// Files or folders; none opens the file browser
+    #[arg(help_heading = "Open", value_name = "PATH")]
     paths: Vec<PathBuf>,
-    /// Variable to show first (matched like the variable picker: fuzzy, file:var)
-    #[arg(short, long)]
-    var: Option<String>,
-    /// Step to show first: a coordinate value (e.g. 1990, -21000) or @index (@1, @-1)
-    #[arg(short, long, allow_hyphen_values = true)]
-    time: Option<String>,
-    /// Colour range: MIN,MAX (or "MIN MAX"), auto or sym
-    #[arg(long, allow_hyphen_values = true)]
-    range: Option<String>,
-    /// Hide values where conditions hold: "mask_ice != 2", "basins = 1,3", "H_ice < 10 and z_bed > 0"
-    #[arg(long, allow_hyphen_values = true)]
-    mask: Option<String>,
-    /// Graphics output; default from $NQV_GFX, else detected
-    #[arg(long, value_enum)]
-    gfx: Option<Gfx>,
-    /// Compare two files or two folders: first minus second (d cycles A-B, A, B)
-    #[arg(short, long)]
+    /// Compare two files or two folders: A - B (d in the viewer cycles A-B, A, B)
+    #[arg(short, long, help_heading = "Open")]
     diff: bool,
-    /// Join the files along time (the record dimension); folders: same-named files across them
-    #[arg(short, long)]
+    /// Join files along time; folders: same-named files across them
+    #[arg(short, long, help_heading = "Open")]
     join: bool,
     /// Dimension to join along, instead of the record dimension
-    #[arg(long, value_name = "DIM", requires = "join")]
+    #[arg(long, value_name = "DIM", requires = "join", help_heading = "Open")]
     join_dim: Option<String>,
+
+    /// Variable to show (fuzzy like the picker; FILE:VAR picks the file)
+    #[arg(short, long, value_name = "NAME", help_heading = "View")]
+    var: Option<String>,
+    /// Step along the first stepped dimension, usually time: VALUE or @INDEX
+    #[arg(
+        short,
+        long,
+        value_name = "VALUE",
+        allow_hyphen_values = true,
+        help_heading = "View"
+    )]
+    time: Option<String>,
+    /// Position along any dimension (repeatable): DIM=VALUE or DIM=@INDEX
+    ///
+    /// Stepped dimensions (time, levels) go to that step. On the two map dimensions it
+    /// picks the cell whose value and series are shown, as a click would.
+    #[arg(
+        long,
+        value_name = "DIM=VALUE",
+        allow_hyphen_values = true,
+        help_heading = "View"
+    )]
+    at: Vec<String>,
+    /// Hide values where all conditions hold, e.g. "mask_ice != 2"
+    #[arg(
+        long,
+        value_name = "COND",
+        allow_hyphen_values = true,
+        help_heading = "View"
+    )]
+    mask: Option<String>,
+    /// In a comparison, show A - B (diff), A or B
+    #[arg(
+        long,
+        value_name = "diff|a|b",
+        requires = "diff",
+        help_heading = "View"
+    )]
+    show: Option<String>,
+
+    /// Colour range: MIN,MAX, auto or sym (symmetric around 0)
+    #[arg(
+        long,
+        value_name = "RANGE",
+        allow_hyphen_values = true,
+        help_heading = "Display"
+    )]
+    range: Option<String>,
+    /// Colour map: viridis, RdBu_r, grays
+    #[arg(long, value_name = "NAME", help_heading = "Display")]
+    cmap: Option<String>,
+    /// Graphics output; default from $NQV_GFX, else detected
+    #[arg(long, value_enum, help_heading = "Display")]
+    gfx: Option<Gfx>,
+
+    /// Write the map to a PNG file instead of opening the viewer
+    #[arg(long, value_name = "FILE", help_heading = "Output")]
+    png: Option<PathBuf>,
+    /// Largest PNG size, WIDTHxHEIGHT; the data aspect is kept
+    #[arg(
+        long,
+        value_name = "WxH",
+        default_value = "1200x800",
+        requires = "png",
+        help_heading = "Output"
+    )]
+    size: String,
 }
+
+const AFTER_LONG_HELP: &str = "\
+Opening:
+  nqv FILE                    one file
+  nqv FOLDER | PATH...        all NetCDF files in the folders, together with the files given
+  nqv --diff A B              A - B for two files, or for two folders file by file (same names)
+  nqv -j FILE...              files joined along time, ordered by their first time value
+  nqv -j FOLDER...            same-named files across the folders joined (restart segments)
+  nqv                         file browser
+
+Values:
+  VALUE                       nearest coordinate value, e.g. 1990, -21000, 70.5
+  @INDEX                      1-based index; @-1 is the last
+  COND (--mask)               VAR OP VALUES [and VAR OP VALUES ...]
+                              OP: = != < <= > >=; = and != take comma lists (basins = 1,3)
+                              hides where all conditions hold; VAR on the same grid
+
+Examples:
+  nqv run/ice.nc -v H_ice -t @-1
+  nqv run/ice.nc -v H_ice --at zeta=@1 --at xc=0 --at yc=0 --cmap grays
+  nqv --diff run1/ run2/ -v H_ice --range sym --mask 'mask_ice != 2'
+  nqv -j seg1/ seg2/ seg3/ -v V_ice
+  nqv run/ice.nc -v H_ice -t 1990 --png H_ice_1990.png
+
+In the viewer, ? lists the keys and : commands (the same as these options),
+and p prints the command for the current view.";
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Gfx {
@@ -106,20 +185,26 @@ fn main() -> Result<()> {
         true => None,
         false => {
             let mut app = App::new(open(&args.paths, &args)?, args.var.as_deref())?;
-            let time = args.time.as_deref().map(command::parse_time).transpose();
-            let range = args.range.as_deref().map(command::parse_range).transpose();
-            let mask = args.mask.as_deref().map(command::parse_mask).transpose();
-            let cmds = [
-                time.map_err(anyhow::Error::msg)?.map(Command::Time),
-                range.map_err(anyhow::Error::msg)?.map(Command::Range),
-                mask.map_err(anyhow::Error::msg)?.map(Command::Mask),
-            ];
-            for c in cmds.into_iter().flatten() {
+            app.origin = Origin {
+                paths: args.paths.clone(),
+                diff: args.diff,
+                join: args.join,
+                join_dim: args.join_dim.clone(),
+            };
+            for c in commands(&args).map_err(anyhow::Error::msg)? {
                 app.apply(c).map_err(anyhow::Error::msg)?;
             }
             Some(app)
         }
     };
+    if let Some(png) = &args.png {
+        let Some(mut app) = app else {
+            bail!("--png needs a file to read");
+        };
+        let size = parse_size(&args.size)?;
+        println!("{}", app.write_png(png, size)?);
+        return Ok(());
+    }
 
     let mut terminal = ratatui::init();
     release_mouse_on_panic();
@@ -139,6 +224,43 @@ fn main() -> Result<()> {
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
     result
+}
+
+/// The view options as commands, in the order they apply: comparison side first (it
+/// sets default colours), then positions, then colours and mask.
+fn commands(args: &Args) -> Result<Vec<Command>, String> {
+    let mut cmds = vec![];
+    if let Some(s) = &args.show {
+        cmds.push(Command::Show(command::parse_show(s)?));
+    }
+    if let Some(t) = &args.time {
+        cmds.push(Command::Time(command::parse_time(t)?));
+    }
+    for a in &args.at {
+        let (dim, pos) = command::parse_at(a)?;
+        cmds.push(Command::At(dim, pos));
+    }
+    if let Some(r) = &args.range {
+        cmds.push(Command::Range(command::parse_range(r)?));
+    }
+    if let Some(c) = &args.cmap {
+        cmds.push(Command::Cmap(c.clone()));
+    }
+    if let Some(m) = &args.mask {
+        cmds.push(Command::Mask(command::parse_mask(m)?));
+    }
+    Ok(cmds)
+}
+
+/// `WIDTHxHEIGHT`, both at least 16.
+fn parse_size(s: &str) -> Result<(u32, u32)> {
+    let parsed = s
+        .split_once(['x', 'X'])
+        .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)));
+    match parsed {
+        Some((w, h)) if w >= 16 && h >= 16 => Ok((w, h)),
+        _ => bail!("--size: expected WIDTHxHEIGHT (at least 16x16), got '{s}'"),
+    }
 }
 
 fn open(paths: &[PathBuf], args: &Args) -> Result<Catalog> {

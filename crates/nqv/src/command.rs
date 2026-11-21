@@ -1,9 +1,50 @@
-//! Commands typed after `:` in the viewer. The command-line flags `-v`, `-t`,
-//! `--range` and `--mask` are parsed by the same functions, so both share one vocabulary.
+//! Commands typed after `:` in the viewer. Each has a command-line flag parsed by the
+//! same function (`COMMANDS` lists the pairs), so both share one vocabulary and
+//! everything shown in the viewer can be reproduced from the command line.
 
-use nqv_core::Op;
+use nqv_core::{Op, Show};
 
-/// Position along the first steppable dimension (usually time).
+/// Each `:` command with its flag and what it does, for help screens.
+pub const COMMANDS: &[(&str, &str, &str)] = &[
+    (
+        "v NAME",
+        "-v NAME",
+        "variable (fuzzy like the picker; file:var picks the file)",
+    ),
+    (
+        "t VALUE | t @INDEX",
+        "-t VALUE",
+        "step along the first stepped dimension (usually time)",
+    ),
+    (
+        "at DIM=VALUE",
+        "--at DIM=VALUE",
+        "any dimension; on the map dimensions it picks the clicked cell",
+    ),
+    (
+        "range MIN MAX | auto | sym",
+        "--range MIN,MAX",
+        "colour range (y range for line plots)",
+    ),
+    (
+        "cmap NAME",
+        "--cmap NAME",
+        "colour map: viridis, RdBu_r, grays",
+    ),
+    (
+        "mask VAR OP VALUES [and ...] | off",
+        "--mask \"...\"",
+        "hide where all conditions hold; OP = != < <= > >=",
+    ),
+    (
+        "show diff | a | b",
+        "--show diff|a|b",
+        "in a comparison: A - B, A or B",
+    ),
+    ("q", "", "quit"),
+];
+
+/// Position along a dimension: VALUE or @INDEX.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TimeSel {
     /// Nearest coordinate value (or 1-based index without a coordinate variable).
@@ -31,6 +72,10 @@ pub enum Command {
     Range(RangeMode),
     /// Mask conditions (all must hold to hide a value); None removes the mask.
     Mask(Option<Vec<MaskCond>>),
+    /// Position along a named dimension.
+    At(String, TimeSel),
+    Cmap(String),
+    Show(Show),
     Quit,
 }
 
@@ -49,7 +94,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE | t @INDEX | range MIN MAX|auto|sym | mask VAR OP VALUES [and ...] | mask off | q";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym | cmap NAME | mask VAR OP VALUES [and ...]|off | show diff|a|b | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -61,6 +106,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "t" | "time" => parse_time(arg).map(Command::Time),
         "range" => parse_range(arg).map(Command::Range),
         "mask" => parse_mask(arg).map(Command::Mask),
+        "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),
+        "cmap" if !arg.is_empty() => Ok(Command::Cmap(arg.to_string())),
+        "show" => parse_show(arg).map(Command::Show),
         "q" | "quit" => Ok(Command::Quit),
         "" => Err(format!("commands: {HELP}")),
         _ => Err(format!("unknown command '{line}'; commands: {HELP}")),
@@ -101,6 +149,38 @@ pub fn parse_range(arg: &str) -> Result<RangeMode, String> {
             }
         }
         _ => Err(bad()),
+    }
+}
+
+/// `DIM=VALUE` or `DIM=@INDEX`.
+pub fn parse_at(arg: &str) -> Result<(String, TimeSel), String> {
+    let bad = || format!("at: expected DIM=VALUE or DIM=@INDEX, got '{arg}'");
+    let (dim, value) = arg.split_once('=').ok_or_else(bad)?;
+    let dim = dim.trim();
+    if dim.is_empty() || dim.contains(char::is_whitespace) {
+        return Err(bad());
+    }
+    let pos = parse_time(value.trim()).map_err(|_| bad())?;
+    Ok((dim.to_string(), pos))
+}
+
+/// `diff`, `a` or `b`.
+pub fn parse_show(arg: &str) -> Result<Show, String> {
+    match arg.to_lowercase().as_str() {
+        "diff" | "a-b" => Ok(Show::Diff),
+        "a" => Ok(Show::A),
+        "b" => Ok(Show::B),
+        _ => Err(format!("show: expected diff, a or b, got '{arg}'")),
+    }
+}
+
+/// Quote `s` for a POSIX shell when it holds anything beyond plain path characters.
+pub fn shell_quote(s: &str) -> String {
+    let plain = |c: char| c.is_ascii_alphanumeric() || "_-./:@=,+%".contains(c);
+    if !s.is_empty() && s.chars().all(plain) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
 
@@ -188,6 +268,30 @@ pub fn time_index(sel: TimeSel, len: usize, coord: Option<&[f32]>) -> Result<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_at_show_cmap() {
+        assert_eq!(
+            parse("at zeta=@3"),
+            Ok(Command::At("zeta".into(), TimeSel::Index(3)))
+        );
+        assert_eq!(
+            parse("at lat = 70.5"),
+            Ok(Command::At("lat".into(), TimeSel::Value(70.5)))
+        );
+        assert!(parse("at zeta").is_err());
+        assert!(parse("at =3").is_err());
+        assert_eq!(parse("show B"), Ok(Command::Show(Show::B)));
+        assert!(parse("show c").is_err());
+        assert_eq!(parse("cmap RdBu_r"), Ok(Command::Cmap("RdBu_r".into())));
+    }
+
+    #[test]
+    fn quotes_for_the_shell() {
+        assert_eq!(shell_quote("run/ice.nc"), "run/ice.nc");
+        assert_eq!(shell_quote("H_ice < 10"), "'H_ice < 10'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
 
     #[test]
     fn parses_masks() {
