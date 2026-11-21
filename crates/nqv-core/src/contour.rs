@@ -8,6 +8,7 @@ use crate::{Catalog, Interp, Kind, VarRef, ViewSpec, finite_range};
 
 /// Which values to draw contours at.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Levels {
     /// About this many round values over the visible range.
     Auto(usize),
@@ -18,6 +19,7 @@ pub enum Levels {
 
 /// Contours of `var` with `levels`.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContourSpec {
     pub var: VarRef,
     pub levels: Levels,
@@ -29,6 +31,7 @@ pub type Segment = [(f32, f32); 2];
 
 /// The line segments of one contour level.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContourLine {
     pub level: f64,
     pub segments: Vec<Segment>,

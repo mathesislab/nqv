@@ -12,7 +12,7 @@ use nqv_core::{
 };
 
 /// How paths are opened (the command-line options that decide it).
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OpenMode {
     /// Two files or two folders compared.
     pub diff: bool,
@@ -24,7 +24,7 @@ pub struct OpenMode {
 }
 
 /// One source (a file, files joined, or a pair compared): its label and variables.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SourceInfo {
     pub path: PathBuf,
     pub label: String,
@@ -34,7 +34,7 @@ pub struct SourceInfo {
 }
 
 /// What a session knows about the opened files, without their data.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CatalogInfo {
     pub sources: Vec<SourceInfo>,
     pub compare: bool,

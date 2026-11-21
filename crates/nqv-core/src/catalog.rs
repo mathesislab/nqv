@@ -9,6 +9,7 @@ use crate::{DimInfo, JoinedReader, NetcdfReader, Reader, VarInfo, record_dim};
 
 /// A variable in a catalog: index of its source and its name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VarRef {
     pub source: usize,
     pub name: String,
@@ -16,6 +17,7 @@ pub struct VarRef {
 
 /// What a comparison shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Show {
     /// First minus second.
     Diff,
@@ -52,6 +54,7 @@ pub struct Catalog {
 
 /// A directory entry for file browsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DirEntry {
     pub name: String,
     pub path: PathBuf,

@@ -8,6 +8,7 @@ use crate::{Catalog, DimInfo, Kind, Mask, Show, VarInfo, VarRef};
 /// A map view: a variable, one index per dimension, and the output size in pixels.
 /// Indices at the two map dimensions are ignored. Values hidden by `mask` are NaN.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ViewSpec {
     pub var: VarRef,
     pub index: Vec<usize>,
@@ -18,6 +19,7 @@ pub struct ViewSpec {
 
 /// How a map is resampled to the view size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Interp {
     /// Each pixel shows one cell.
     #[default]
@@ -31,6 +33,7 @@ pub enum Interp {
 /// A line view: values along dimension `along`, other dimensions fixed by `index`.
 /// Reads with a stride so that at most about `2 * max_points` points are returned.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SeriesSpec {
     pub var: VarRef,
     pub along: usize,
@@ -41,6 +44,7 @@ pub struct SeriesSpec {
 
 /// Values on the view's pixel grid, row 0 at the top. NaN marks missing data.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Raster {
     pub w: u32,
     pub h: u32,
@@ -49,12 +53,14 @@ pub struct Raster {
 
 /// Values along one dimension, with coordinate values (or indices) as x.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Series {
     pub x: Vec<f32>,
     pub y: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RangeEstimate {
     pub min: f32,
     pub max: f32,
@@ -312,6 +318,7 @@ pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize,
 
 /// Statistics of a map slice: finite (visible) values only.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Stats {
     pub min: f32,
     pub max: f32,

@@ -5,6 +5,7 @@ use anyhow::{Result, bail};
 use crate::{Catalog, Kind, Show, VarInfo, VarRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Op {
     /// Equal to any of the values.
     Eq,
@@ -31,6 +32,7 @@ impl Op {
 
 /// `var op values`, e.g. `mask_ice != 2` or `basins = 1,3`.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Cond {
     pub var: VarRef,
     pub op: Op,
@@ -57,6 +59,7 @@ impl Cond {
 
 /// Values are hidden where all conditions hold. No conditions: nothing hidden.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mask {
     pub conds: Vec<Cond>,
 }

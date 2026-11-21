@@ -25,6 +25,7 @@ pub use crate::view::{
 
 /// How a variable is shown, from its dimensions of length other than 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Kind {
     /// The last two such dimensions are (y, x).
     Map { y: usize, x: usize },
@@ -36,6 +37,7 @@ pub enum Kind {
 
 /// A dimension of a variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DimInfo {
     pub name: String,
     pub len: usize,
@@ -45,6 +47,7 @@ pub struct DimInfo {
 
 /// Metadata of a numeric variable.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VarInfo {
     pub name: String,
     pub dims: Vec<DimInfo>,
