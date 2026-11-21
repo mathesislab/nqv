@@ -24,7 +24,7 @@ export DEBIAN_FRONTEND=noninteractive CARGO_TARGET_DIR=/work/target PATH=/root/.
 apt-get update -qq
 apt-get install -y -qq libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
   libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 \
-  imagemagick rsync openssh-client libgl1-mesa-dri >/dev/null
+  imagemagick rsync openssh-client libgl1-mesa-dri xdotool >/dev/null
 command -v node >/dev/null || { curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null; apt-get install -y -qq nodejs >/dev/null; }
 cargo --version >/dev/null 2>&1 || curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal
 rsync -a --delete --exclude target --exclude node_modules --exclude build --exclude linux-out \

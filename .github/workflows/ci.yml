@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb dbus-x11 \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb dbus-x11 xdotool \
             imagemagick
 
       - uses: actions/setup-node@v4
@@ -62,5 +62,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke-linux
-          path: ${{ runner.temp }}/smoke-linux.png
+          path: ${{ runner.temp }}/smoke-linux*.png
           if-no-files-found: ignore
