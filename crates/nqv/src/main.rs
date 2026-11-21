@@ -1,6 +1,7 @@
 //! nqv: quick-look viewer for NetCDF files in any terminal.
 
 mod app;
+mod browser;
 mod ui;
 
 use std::io::stdout;
@@ -23,8 +24,7 @@ folders (comparison, first minus second; files in folders paired by name); or se
 A last argument that is not an existing path is taken as the variable to show first."
 )]
 struct Args {
-    /// Files or folders, optionally followed by a variable name
-    #[arg(required = true)]
+    /// Files or folders, optionally followed by a variable name; none opens the file browser
     paths: Vec<PathBuf>,
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum)]
@@ -75,15 +75,25 @@ fn main() -> Result<()> {
         _ => Gfx::Auto,
     };
     let (paths, var) = split_var(args.paths);
-    let cat = Catalog::open(&paths)?;
-    let mut app = App::new(cat, var.as_deref())?;
+    // Open before taking over the terminal, so errors print plainly.
+    let app = match paths.is_empty() {
+        true => None,
+        false => Some(App::new(Catalog::open(&paths)?, var.as_deref())?),
+    };
 
     let mut terminal = ratatui::init();
     release_mouse_on_panic();
     let result = select_output(gfx).and_then(|out| {
         // After the terminal query in select_output, so mouse reports can't mix into its reply.
         execute!(stdout(), EnableMouseCapture)?;
-        app.run(&mut terminal, out)
+        let app = match app {
+            Some(app) => Some(app),
+            None => App::pick(&mut terminal, &std::env::current_dir()?)?,
+        };
+        match app {
+            Some(mut app) => app.run(&mut terminal, out),
+            None => Ok(()),
+        }
     });
     // Harmless when capture was never enabled.
     let _ = execute!(stdout(), DisableMouseCapture);

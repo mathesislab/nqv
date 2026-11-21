@@ -7,8 +7,10 @@ Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (
 ## Use
 
 ```bash
-nqv PATH... [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
+nqv [PATH...] [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 ```
+
+Without a path, `nqv` opens a file browser on the current folder.
 
 | PATH | Opens |
 |---|---|
@@ -28,6 +30,9 @@ In a comparison, variables missing in the second file, or with different dimensi
 | `c` | next colour map |
 | `r` | toggle range: auto / symmetric around 0 |
 | `d` | comparison: cycle A − B, A, B |
+| `o` | file browser (Enter open, Backspace up, `c` open folder as collection, Esc close) |
+| `O` | open the current file's folder as a collection |
+| `[` `]` | previous / next file (in the folder, or in the collection); the variable stays where it exists |
 | click on a map | value, cell and coordinates in the status line; series along the ← → dimension below the map |
 | `Esc` | close the clicked cell and its series; else quit |
 | `q` | quit |

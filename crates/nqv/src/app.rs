@@ -1,11 +1,13 @@
 //! Viewer state and key handling.
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
     Catalog, Kind, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at,
-    finite_range, fit_size, range, series, value, view,
+    finite_range, fit_size, netcdf_files, range, series, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, colorize};
 use ratatui::DefaultTerminal;
@@ -13,6 +15,7 @@ use ratatui::layout::{Position, Rect, Size};
 use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
+use crate::browser::{Action, Browser};
 use crate::ui;
 
 /// What the main area shows for one state and screen area.
@@ -79,6 +82,8 @@ pub struct App {
     pub panel: Option<Frame>,
     /// Shown instead of the help line until the next key.
     pub message: Option<String>,
+    /// File browser, drawn over everything else.
+    pub browser: Option<Browser>,
     /// Set when the screen must be cleared before the next draw (image protocols
     /// leave images behind when the plot type changes).
     clear: bool,
@@ -121,6 +126,7 @@ impl App {
             probe: None,
             panel: None,
             message,
+            browser: None,
             clear: false,
         };
         app.set_var(first);
@@ -151,6 +157,10 @@ impl App {
                 self.update_frame(&out, areas.plot);
                 self.update_probe(areas.panel);
                 ui::draw(f, self, &out, &areas);
+                if let Some(b) = &self.browser {
+                    let area = f.area();
+                    b.draw(f, area);
+                }
             })?;
             match next_event()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
@@ -168,7 +178,7 @@ impl App {
 
     /// Probe the map cell under screen cell (`col`, `row`); clicks beside the map do nothing.
     fn click(&mut self, out: &Output, col: u16, row: u16) {
-        if self.picker.is_some() {
+        if self.picker.is_some() || self.browser.is_some() {
             return;
         }
         let Some(Frame {
@@ -213,6 +223,17 @@ impl App {
 
     /// Returns false to quit.
     fn handle_key(&mut self, code: KeyCode) -> bool {
+        if let Some(b) = &mut self.browser {
+            match b.handle_key(code) {
+                Action::None => {}
+                Action::Close => {
+                    self.browser = None;
+                    self.clear = true;
+                }
+                Action::Open(paths) => self.open_paths(&paths),
+            }
+            return true;
+        }
         if let Some(p) = &mut self.picker {
             let names = filtered_vars(&self.cat, &p.query);
             match code {
@@ -255,6 +276,16 @@ impl App {
                 })
             }
             KeyCode::Char('c') => self.cmap = (self.cmap + 1) % CMAPS.len(),
+            KeyCode::Char('o') => {
+                let file = self.source_path();
+                self.browser = Some(Browser::new(&dir_of(&file), Some(&file)));
+            }
+            KeyCode::Char('O') if self.cat.compare => {
+                self.message = Some("O: not in a comparison; use o".into())
+            }
+            KeyCode::Char('O') => self.open_paths(&[dir_of(&self.source_path())]),
+            KeyCode::Char(']') => self.neighbour(1),
+            KeyCode::Char('[') => self.neighbour(-1),
             KeyCode::Char('r') => self.symmetric = !self.symmetric,
             KeyCode::Char('d') if self.cat.compare => {
                 self.cat.show = match self.cat.show {
@@ -272,6 +303,127 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// Absolute path of the current variable's (first) file.
+    fn source_path(&self) -> PathBuf {
+        let p = &self.cat.sources[self.var.source].path;
+        std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())
+    }
+
+    /// Open `paths` as on the command line, keeping the variable where possible.
+    /// On failure the message goes to the browser if it is open.
+    fn open_paths(&mut self, paths: &[PathBuf]) {
+        let res = Catalog::open(paths).and_then(|cat| self.switch(cat));
+        if let Err(e) = res {
+            let m = Some(format!("{e:#}"));
+            match &mut self.browser {
+                Some(b) => b.message = m,
+                None => self.message = m,
+            }
+        }
+    }
+
+    /// Replace the catalog. The current variable stays (preferably from the same file)
+    /// with its indices if the dimensions match, and so do the colours outside comparisons.
+    fn switch(&mut self, cat: Catalog) -> Result<()> {
+        let file = self.source_path();
+        let mut new = App::new(cat, None)?;
+        let same_file = |r: &VarRef| {
+            std::fs::canonicalize(&new.cat.sources[r.source].path).is_ok_and(|p| p == file)
+        };
+        let candidates: Vec<VarRef> = new
+            .cat
+            .data_vars()
+            .into_iter()
+            .filter(|(_, v)| v.name == self.var.name)
+            .map(|(r, _)| r)
+            .collect();
+        let keep = candidates
+            .iter()
+            .find(|r| same_file(r))
+            .or(candidates.first())
+            .cloned();
+        if let Some(r) = keep {
+            new.keep_var(r, self.var_info(), &self.index);
+        }
+        if !self.cat.compare && !new.cat.compare {
+            (new.cmap, new.symmetric) = (self.cmap, self.symmetric);
+        }
+        new.clear = true;
+        *self = new;
+        Ok(())
+    }
+
+    /// Select `r`, keeping `index` when `r` has the same dimensions as `old`.
+    fn keep_var(&mut self, r: VarRef, old: &VarInfo, index: &[usize]) {
+        let same = self.cat.var(&r).is_ok_and(|v| v.dims == old.dims);
+        self.set_var(r);
+        if same {
+            self.index = index.to_vec();
+        }
+    }
+
+    /// Previous/next file: within a collection or folder comparison its sources, else
+    /// the NetCDF files next to the current file. The variable stays where it exists.
+    fn neighbour(&mut self, delta: isize) {
+        let n = self.cat.sources.len();
+        if n > 1 {
+            let s = (self.var.source as isize + delta).rem_euclid(n as isize) as usize;
+            let vars: Vec<(VarRef, &VarInfo)> = self
+                .cat
+                .data_vars()
+                .into_iter()
+                .filter(|(r, _)| r.source == s)
+                .collect();
+            let same = vars.iter().find(|(_, v)| v.name == self.var.name);
+            let Some(r) = same.map(|(r, _)| r).or(default_var(&vars)).cloned() else {
+                self.message = Some(format!("{}: no data variables", self.cat.label(s)));
+                return;
+            };
+            let (old, index) = (self.var_info().clone(), self.index.clone());
+            self.keep_var(r, &old, &index);
+            return;
+        }
+        if self.cat.compare {
+            self.message =
+                Some("[ ]: comparing two files; compare folders to step through files".into());
+            return;
+        }
+        let file = self.source_path();
+        let files = netcdf_files(&dir_of(&file)).unwrap_or_default();
+        let Some(pos) = files.iter().position(|f| f.file_name() == file.file_name()) else {
+            return;
+        };
+        let next = (pos as isize + delta).rem_euclid(files.len() as isize) as usize;
+        self.open_paths(&[files[next].clone()]);
+    }
+
+    /// File browser on its own, before anything is open; None when it is closed.
+    pub fn pick(terminal: &mut DefaultTerminal, dir: &Path) -> Result<Option<App>> {
+        let mut b = Browser::new(dir, None);
+        loop {
+            terminal.draw(|f| {
+                let area = f.area();
+                b.draw(f, area);
+            })?;
+            let Event::Key(k) = next_event()? else {
+                continue;
+            };
+            if k.kind != KeyEventKind::Press {
+                continue;
+            }
+            match b.handle_key(k.code) {
+                Action::None => {}
+                Action::Close => return Ok(None),
+                Action::Open(paths) => {
+                    match Catalog::open(&paths).and_then(|c| App::new(c, None)) {
+                        Ok(app) => return Ok(Some(app)),
+                        Err(e) => b.message = Some(format!("{e:#}")),
+                    }
+                }
+            }
+        }
     }
 
     /// Move the `k`-th steppable dimension by `delta`, clamped to its length.
@@ -501,6 +653,14 @@ fn pixel_at(out: &Output, rect: Rect, col: u16, row: u16) -> Option<(u32, u32)> 
             (c * fw + fw / 2, r * fh + fh / 2)
         }
     })
+}
+
+/// Folder of `file`, "." for a bare file name.
+fn dir_of(file: &Path) -> PathBuf {
+    match file.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
 }
 
 /// Colour map index and symmetric range for what is shown: differences read best on a
