@@ -25,7 +25,9 @@ use crate::command::Command;
     after_help = "PATH: one file, or any number of files and folders (all NetCDF files in \
 the folders), opened together.\n\
 With --diff: two files or two folders, compared as first minus second (files in folders \
-paired by name)."
+paired by name).\n\
+With --join: the files joined along time (the record dimension) into one; for folders, \
+the files of the same name across them joined, e.g. restart segments."
 )]
 struct Args {
     /// Files or folders; none opens the file browser
@@ -45,6 +47,12 @@ struct Args {
     /// Compare two files or two folders: first minus second (d cycles A-B, A, B)
     #[arg(short, long)]
     diff: bool,
+    /// Join the files along time (the record dimension); folders: same-named files across them
+    #[arg(short, long)]
+    join: bool,
+    /// Dimension to join along, instead of the record dimension
+    #[arg(long, value_name = "DIM", requires = "join")]
+    join_dim: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -90,13 +98,11 @@ fn main() -> Result<()> {
         },
         _ => Gfx::Auto,
     };
-    let paths = args.paths;
-    let var = args.var;
     // Open before taking over the terminal, so errors print plainly.
-    let app = match paths.is_empty() {
+    let app = match args.paths.is_empty() {
         true => None,
         false => {
-            let mut app = App::new(open(&paths, args.diff)?, var.as_deref())?;
+            let mut app = App::new(open(&args.paths, &args)?, args.var.as_deref())?;
             let time = args.time.as_deref().map(command::parse_time).transpose();
             let range = args.range.as_deref().map(command::parse_range).transpose();
             let cmds = [
@@ -130,14 +136,16 @@ fn main() -> Result<()> {
     result
 }
 
-fn open(paths: &[PathBuf], diff: bool) -> Result<Catalog> {
+fn open(paths: &[PathBuf], args: &Args) -> Result<Catalog> {
     if let Some(p) = paths.iter().find(|p| !p.exists()) {
         bail!("{}: no such file or folder", p.display());
     }
-    match (diff, paths) {
-        (false, _) => Catalog::open(paths),
-        (true, [a, b]) => Catalog::compare(a, b),
-        (true, _) => bail!("--diff needs two files or two folders"),
+    match (args.diff, args.join, paths) {
+        (true, true, _) => bail!("--diff with --join is not supported yet"),
+        (true, false, [a, b]) => Catalog::compare(a, b),
+        (true, false, _) => bail!("--diff needs two files or two folders"),
+        (false, true, _) => Catalog::join(paths, args.join_dim.as_deref()),
+        (false, false, _) => Catalog::open(paths),
     }
 }
 

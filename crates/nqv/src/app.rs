@@ -106,13 +106,14 @@ impl App {
                 None => bail!("no data variables"),
             },
         };
-        let message = match cat.skipped.len() {
-            0 => None,
-            n => Some(format!(
-                "{n} file(s) not opened, e.g. {}: {}",
-                cat.skipped[0].0.display(),
-                cat.skipped[0].1
+        let message = match (cat.notes.first(), cat.skipped.first()) {
+            (Some(note), _) => Some(format!("{note} ({} warning(s))", cat.notes.len())),
+            (None, Some((path, why))) => Some(format!(
+                "{} file(s) not opened, e.g. {}: {why}",
+                cat.skipped.len(),
+                path.display()
             )),
+            (None, None) => None,
         };
         let (cmap, range_mode) = if cat.compare {
             colour_defaults(cat.show)

@@ -7,7 +7,7 @@ Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (
 ## Use
 
 ```bash
-nqv [--diff] [PATH...] [-v VAR] [-t TIME] [--range MIN,MAX] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
+nqv [--diff | -j [--join-dim DIM]] [PATH...] [-v VAR] [-t TIME] [--range MIN,MAX] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 ```
 
 `-v` matches like the variable picker; `-t` takes a coordinate value (`1990`, `-21000`) or a 1-based index `@12`, `@-1` (last); `--range` takes `MIN,MAX`, `auto` or `sym`. The same commands work inside the viewer after `:`.
@@ -21,8 +21,10 @@ Without a path, `nqv` opens a file browser on the current folder.
 | `a.nc b.nc run2/ ...` | all of them together, as with one folder |
 | `--diff a.nc b.nc` | comparison: a − b, or a or b (`d`) |
 | `--diff run1/ run2/` | comparison of the files with the same name in both folders |
+| `-j a.nc b.nc ...` | the files joined along time (the record dimension) into one, ordered by their first time value |
+| `-j seg1/ seg2/ ...` | the files of the same name across the folders joined, e.g. restart segments |
 
-In a comparison, variables missing in the second file, or with different dimensions, show an error instead of a plot.
+Joined files must have the same variables and dimensions apart from the time length; time steps out of order between files give a warning. In a comparison, variables missing in the second file, or with different dimensions, show an error instead of a plot.
 
 | Key | Action |
 |---|---|

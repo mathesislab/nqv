@@ -101,7 +101,7 @@ Navigation lives in the core and the protocol, so every front end can change fil
 
 ## Launch
 
-- `nqv file.nc [-v var]`, `nqv run/` (collection), `nqv f1 f2 run2/ ...` (collection), `nqv --diff a.nc b.nc` or `nqv --diff run1/ run2/` (comparison), `nqv` (browser on cwd). Stitching files along time is not implemented yet.
+- `nqv file.nc [-v var]`, `nqv run/` (collection), `nqv f1 f2 run2/ ...` (collection), `nqv --diff a.nc b.nc` or `nqv --diff run1/ run2/` (comparison), `nqv` (browser on cwd). `nqv -j f1 f2 ...` joins files along the record dimension (`--join-dim` for another); `nqv -j seg1/ seg2/` joins same-named files across folders. A `JoinedReader` implements `Reader`, so everything above it is unchanged; files are ordered by their first coordinate value.
 - `nqv f.nc temp -t -1 -z 100 --region arctic`: jump straight to a view. Every view can print the command line that reproduces it.
 - Opener for `.nc` in yazi/lf/ranger; target for fzf.
 - **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Works on Albedo and Levante; see Verified.)
