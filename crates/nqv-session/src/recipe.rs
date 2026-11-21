@@ -10,6 +10,35 @@ pub fn dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".nqv/recipes"))
 }
 
+/// ~/.nqv/defaults: settings applied whenever files are opened.
+pub fn defaults_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".nqv/defaults"))
+}
+
+/// The commands of ~/.nqv/defaults (none without the file), and the lines that are
+/// not commands (skipped), each with why.
+pub fn defaults() -> (Vec<Command>, Vec<String>) {
+    let Some(p) = defaults_path().filter(|p| p.is_file()) else {
+        return (vec![], vec![]);
+    };
+    let text = match std::fs::read_to_string(&p) {
+        Ok(t) => t,
+        Err(e) => return (vec![], vec![format!("{}: {e}", p.display())]),
+    };
+    let (mut cmds, mut bad) = (vec![], vec![]);
+    for (n, line) in text.lines().enumerate() {
+        match parse(line) {
+            Ok(c) => cmds.extend(c),
+            Err((_, e)) => {
+                // the reason, without the list of all commands
+                let e = e.split("; commands:").next().unwrap_or(&e);
+                bad.push(format!("~/.nqv/defaults line {}: {e}", n + 1));
+            }
+        }
+    }
+    (cmds, bad)
+}
+
 /// The recipe file for `name`: a path to a file, or a name in ~/.nqv/recipes.
 pub fn path(name: &str) -> Result<PathBuf, String> {
     let p = Path::new(name);
@@ -108,11 +137,13 @@ pub fn list() -> Vec<(String, String)> {
     out
 }
 
-/// Write `lines` as recipe `name` in ~/.nqv/recipes (or to a path); returns the file.
+/// Write `lines` as recipe `name` in ~/.nqv/recipes (or to a path; `defaults`: as
+/// ~/.nqv/defaults); returns the file.
 pub fn save(name: &str, lines: &[String]) -> Result<PathBuf, String> {
-    let p = match name.contains('/') {
-        true => PathBuf::from(name),
-        false => dir().ok_or("no home folder")?.join(name),
+    let p = match name {
+        "defaults" => defaults_path().ok_or("no home folder")?,
+        n if n.contains('/') => PathBuf::from(n),
+        n => dir().ok_or("no home folder")?.join(n),
     };
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;

@@ -129,6 +129,19 @@ Joined files must have the same variables and dimensions apart from the time len
 
 Beside a map (or on a line below it when there is no room) the terminal shows statistics of the slice: min, mean, max, standard deviation and the share of cells with a value, after masking. Mean and standard deviation are weighted (marked *, with what by): by the cell-area variable named in the CF `cell_measures` attribute, else by a variable called `area`, `cell_area`, `areacella` or `areacello` on the same grid in the same file, else by the cosine of latitude on latitude-longitude grids (y coordinate in degrees north, or named lat/latitude); otherwise they are unweighted. Slices over 4 million cells are sampled (marked ~).
 
+### Defaults
+
+`~/.nqv/defaults` holds settings for every view, in the recipe format, e.g.
+
+```
+cmap cividis
+labels off
+interp bilinear
+coast off
+```
+
+They are applied whenever files are opened (terminal, `--png`, the desktop app), before `-r` recipes and the command-line options, which win. The colour map and range apply to every view but differences (A − B keeps its diverging colours). Lines that do not fit the files opened are skipped with a note. `:save defaults` writes the current colours and display settings there; `--no-defaults` starts from the built-in settings. `p` and copy command include what the defaults set, so the command line shows the same view without them. With `HOST:PATH` (and in the desktop app) your local defaults apply; `nqv` run on a cluster reads the cluster's.
+
 ### Remote files
 
 `nqv albedo0:/path/to/run/ -v H_ice` (scp-style `HOST:PATH`, all paths on one host) starts `nqv serve --stdio` on the host over ssh, with your ssh config, keys and jump hosts. The server reads the data and sends screen-sized maps (16-bit, LZ4-compressed), so the terminal, images and PNGs come from your machine: `--png` writes the file locally. Everything else works as with local files, including the file browser (on the host's file system), `--diff`, `-j`, `--vs` and recipes (from your local `~/.nqv/recipes`, else from the host's). The host needs the same nqv version (`scripts/deploy.sh HOST`); it is found on the PATH or in `~/bin`, or give `--remote-cmd`.

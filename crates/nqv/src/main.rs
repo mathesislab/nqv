@@ -152,6 +152,10 @@ struct Args {
     #[arg(long, value_enum, help_heading = "Display")]
     gfx: Option<Gfx>,
 
+    /// Leave out ~/.nqv/defaults (start from the built-in settings)
+    #[arg(long, help_heading = "View")]
+    no_defaults: bool,
+
     /// Write the view (map or line plot) to a PNG file instead of opening the viewer
     #[arg(long, value_name = "FILE", help_heading = "Output")]
     png: Option<PathBuf>,
@@ -324,6 +328,10 @@ fn main() -> Result<()> {
                     Session::new(Box::new(Remote::open(conn, &paths, &mode)?), origin)?
                 }
             };
+            let mut session = session;
+            if !args.no_defaults {
+                session.apply_defaults_file();
+            }
             let mut app = App::new(session);
             for c in commands(&args).map_err(anyhow::Error::msg)? {
                 app.apply(c).map_err(anyhow::Error::msg)?;
@@ -351,6 +359,10 @@ fn main() -> Result<()> {
         let app = match app {
             Some(app) => Some(app),
             None => App::pick(&mut terminal, &std::env::current_dir()?)?.map(|mut a| {
+                if !args.no_defaults {
+                    a.s.apply_defaults_file();
+                    a.message = a.s.startup_message().or(a.message.take());
+                }
                 a.s.cvd |= args.cvd;
                 a
             }),

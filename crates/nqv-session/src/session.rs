@@ -101,6 +101,10 @@ pub struct Session {
     pub coast: bool,
     /// Values written on contour lines (desktop app, PNGs).
     pub labels: bool,
+    /// Settings from ~/.nqv/defaults (`apply_defaults`): colours and display options.
+    pub defaults: Vec<Command>,
+    /// Defaults that could not be applied, to say once.
+    notes: Vec<String>,
 }
 
 impl Session {
@@ -136,6 +140,8 @@ impl Session {
             target: None,
             coast: true,
             labels: true,
+            defaults: vec![],
+            notes: vec![],
         };
         s.reset()?;
         Ok(s)
@@ -148,9 +154,54 @@ impl Session {
             bail!("no data variables");
         };
         (self.cmap, self.range_mode) =
-            colour_defaults(if info.compare { info.show } else { Show::A });
+            self.colours_for(if info.compare { info.show } else { Show::A });
         self.set_var(first);
         Ok(())
+    }
+
+    /// Apply settings from ~/.nqv/defaults (`recipe::defaults`): colour map and range
+    /// become those of every view but differences (A - B keeps its diverging colours),
+    /// the others are applied now. Lines that do not fit these files are skipped and
+    /// said in `startup_message`. Front ends call this after opening, unless asked not
+    /// to (`--no-defaults`).
+    pub fn apply_defaults(&mut self, defaults: Vec<Command>) {
+        self.defaults = defaults.clone();
+        let info = self.info();
+        (self.cmap, self.range_mode) =
+            self.colours_for(if info.compare { info.show } else { Show::A });
+        for c in defaults {
+            if matches!(c, Command::Cmap(_) | Command::Range(_)) {
+                continue;
+            }
+            if let Err(e) = self.apply(c) {
+                self.notes.push(format!("~/.nqv/defaults: {e} (skipped)"));
+            }
+        }
+    }
+
+    /// `apply_defaults` with ~/.nqv/defaults; lines that are not commands are skipped
+    /// and said in `startup_message`.
+    pub fn apply_defaults_file(&mut self) {
+        let (cmds, bad) = recipe::defaults();
+        self.notes
+            .extend(bad.into_iter().map(|b| format!("{b} (skipped)")));
+        self.apply_defaults(cmds);
+    }
+
+    /// The colour map and range a view showing `show` starts with: the built-in ones
+    /// (`colour_defaults`), with those of ~/.nqv/defaults outside differences.
+    fn colours_for(&self, show: Show) -> (usize, RangeMode) {
+        let (mut cmap, mut range) = colour_defaults(show);
+        if show != Show::Diff {
+            for c in &self.defaults {
+                match c {
+                    Command::Cmap(name) => cmap = cmap_index(name).unwrap_or(cmap),
+                    Command::Range(r) => range = *r,
+                    _ => {}
+                }
+            }
+        }
+        (cmap, range)
     }
 
     pub fn info(&self) -> &CatalogInfo {
@@ -161,9 +212,13 @@ impl Session {
         self.info().var(&self.var).expect("current variable exists")
     }
 
-    /// Notes and skipped files from opening, to show once.
+    /// Notes and skipped files from opening, and defaults that did not apply, to show
+    /// once.
     pub fn startup_message(&self) -> Option<String> {
         let info = self.info();
+        if let Some(n) = self.notes.first() {
+            return Some(n.clone());
+        }
         match (info.notes.first(), info.skipped.first()) {
             (Some(note), _) => Some(format!("{note} ({} warning(s))", info.notes.len())),
             (None, Some((path, why))) => Some(format!(
@@ -425,7 +480,7 @@ impl Session {
             return Err("d: start with --diff A B to compare two files or folders".into());
         }
         self.backend.set_show(show);
-        (self.cmap, self.range_mode) = colour_defaults(show);
+        (self.cmap, self.range_mode) = self.colours_for(show);
         self.probe = None;
         Ok(())
     }
@@ -576,10 +631,26 @@ impl Session {
                 }
             }
             Command::Save(name) => {
-                let lines: Vec<String> = self.settings().into_iter().map(|(l, _)| l).collect();
+                let mut lines: Vec<String> = self.settings().into_iter().map(|(l, _)| l).collect();
+                // Defaults hold what suits any file: colours and display, no data ranges.
+                if name == "defaults" {
+                    lines.retain(|l| {
+                        let (cmd, arg) = l.split_once(' ').unwrap_or((l, ""));
+                        match cmd {
+                            "cmap" | "interp" | "cvd" | "labels" | "coast" => true,
+                            "range" => !arg.contains(|c: char| c.is_ascii_digit()),
+                            _ => false,
+                        }
+                    });
+                }
                 let p = recipe::save(&name, &lines)?;
+                let what = if name == "defaults" {
+                    "defaults"
+                } else {
+                    "recipe"
+                };
                 return Ok(Effect::Message(format!(
-                    "saved recipe {name} ({})",
+                    "saved {what} {name} ({})",
                     p.display()
                 )));
             }

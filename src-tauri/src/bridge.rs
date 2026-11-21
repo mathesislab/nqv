@@ -30,7 +30,14 @@ pub struct OpenRequest {
     pub host: Option<String>,
 }
 
+/// Open the files of `req` (here or on its host), with ~/.nqv/defaults applied.
 pub fn open(req: OpenRequest) -> Result<Session> {
+    let mut s = open_plain(req)?;
+    s.apply_defaults_file();
+    Ok(s)
+}
+
+fn open_plain(req: OpenRequest) -> Result<Session> {
     let mode = OpenMode {
         diff: req.diff,
         join: req.join,

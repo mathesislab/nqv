@@ -87,6 +87,7 @@ fn receive(app: &AppHandle, s: UnixStream) -> Result<()> {
     } = h;
     let (opened, note) = match opened {
         Ok(mut s) => {
+            s.apply_defaults_file();
             let note = apply(&mut s, commands);
             (Ok(s), note)
         }
