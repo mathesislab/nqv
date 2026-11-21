@@ -2,10 +2,7 @@
 
 mod app;
 mod browser;
-mod command;
-mod fuzzy;
 mod png;
-mod recipe;
 mod ui;
 
 use std::io::stdout;
@@ -19,7 +16,8 @@ use nqv_core::Catalog;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 use crate::app::{App, Origin};
-use crate::command::Command;
+use nqv_session::command::{self, Command};
+use nqv_session::recipe;
 
 #[derive(Parser)]
 #[command(

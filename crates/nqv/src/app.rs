@@ -17,11 +17,11 @@ use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
 use crate::browser::{Action, Browser};
-use crate::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel};
-use crate::fuzzy;
 use crate::png;
-use crate::recipe;
 use crate::ui;
+use nqv_session::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel};
+use nqv_session::fuzzy;
+use nqv_session::recipe;
 
 /// What the main area shows for one state and screen area.
 pub enum Plot {

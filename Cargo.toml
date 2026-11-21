@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/nqv-core", "crates/nqv-render", "crates/nqv"]
+members = ["crates/nqv-core", "crates/nqv-render", "crates/nqv", "crates/nqv-session"]
 
 [workspace.package]
 edition = "2024"

@@ -1090,6 +1090,7 @@ dependencies = [
  "image",
  "nqv-core",
  "nqv-render",
+ "nqv-session",
  "ratatui",
  "ratatui-image",
 ]
@@ -1105,6 +1106,13 @@ dependencies = [
 [[package]]
 name = "nqv-render"
 version = "0.1.0"
+
+[[package]]
+name = "nqv-session"
+version = "0.1.0"
+dependencies = [
+ "nqv-core",
+]
 
 [[package]]
 name = "num-complex"

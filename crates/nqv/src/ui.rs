@@ -15,7 +15,7 @@ use ratatui_image::Image;
 
 use crate::Output;
 use crate::app::{App, Frame as PlotFrame, MapImage, Plot, filtered_vars};
-use crate::command::{self, RangeMode};
+use nqv_session::command::{self, RangeMode};
 
 pub struct Areas {
     pub plot: Rect,
@@ -174,7 +174,10 @@ fn draw_help(f: &mut Frame) {
         ))
         .dim(),
     );
-    let recipes: Vec<String> = crate::recipe::list().into_iter().map(|(n, _)| n).collect();
+    let recipes: Vec<String> = nqv_session::recipe::list()
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     if !recipes.is_empty() {
         lines.push(Line::raw(format!("recipes (:recipe NAME): {}", recipes.join(", "))).dim());
     }
