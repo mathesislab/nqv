@@ -1,7 +1,7 @@
 [package]
 name = "nqv-desktop"
 version.workspace = true
-description = "Quick-look viewer for NetCDF files: desktop app on the nqv session"
+description = "nqv desktop: quick-look viewer for NetCDF model output"
 edition.workspace = true
 license.workspace = true
 

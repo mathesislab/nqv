@@ -49,7 +49,16 @@
         "description": "NetCDF data",
         "role": "Viewer"
       }
-    ]
+    ],
+    "shortDescription": "Quick-look viewer for NetCDF model output",
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/nqv.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/nqv.desktop"
+      }
+    }
   },
   "mainBinaryName": "nqv-desktop",
   "plugins": {
