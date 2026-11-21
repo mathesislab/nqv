@@ -175,3 +175,98 @@ mod tests {
         assert_eq!(ansi256([0, 0, 0]), 16);
     }
 }
+
+/// A line segment from one point to another, in pixels (x right, y down).
+pub type Segment = [(f32, f32); 2];
+
+/// Relative luminance of an RGB colour, 0 to 1.
+pub fn luminance(c: [u8; 3]) -> f32 {
+    (0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32) / 255.0
+}
+
+/// Black on light colours, white on dark ones.
+pub fn contrast(c: [u8; 3]) -> [u8; 3] {
+    if luminance(c) > 0.45 {
+        [0, 0, 0]
+    } else {
+        [255, 255, 255]
+    }
+}
+
+/// Pixels a segment passes through, one per step along its longer axis.
+fn line_pixels(s: &Segment, mut put: impl FnMut(i64, i64)) {
+    let [(x0, y0), (x1, y1)] = *s;
+    let n = (x1 - x0).abs().max((y1 - y0).abs()).ceil().max(1.0) as usize;
+    for k in 0..=n {
+        let t = k as f32 / n as f32;
+        put(
+            (x0 + t * (x1 - x0)).floor() as i64,
+            (y0 + t * (y1 - y0)).floor() as i64,
+        );
+    }
+}
+
+/// Draw segments one pixel wide into `img`, each pixel black or white for contrast with
+/// the colour under it.
+pub fn draw_lines(img: &mut Rgba, segments: &[Segment]) {
+    let (w, h) = (img.w as i64, img.h as i64);
+    for s in segments {
+        line_pixels(s, |x, y| {
+            if (0..w).contains(&x) && (0..h).contains(&y) {
+                let i = 4 * (y * w + x) as usize;
+                let c = contrast([img.data[i], img.data[i + 1], img.data[i + 2]]);
+                img.data[i..i + 3].copy_from_slice(&c);
+            }
+        });
+    }
+}
+
+/// Braille patterns for segments over a `w` by `h` pixel image drawn as half-blocks
+/// (one cell = 1 x 2 pixels = 2 x 4 braille dots): one byte of dot bits per cell, row by
+/// row (`w` cells per row, `h.div_ceil(2)` rows); 0 where no line passes. The character
+/// is U+2800 plus the byte.
+pub fn braille_cells(w: u32, h: u32, segments: &[Segment]) -> Vec<u8> {
+    let rows = h.div_ceil(2) as i64;
+    let (w, dw, dh) = (w as i64, 2 * w as i64, 4 * rows);
+    let mut cells = vec![0u8; (w * rows) as usize];
+    // Bit of dot (column, row) within a cell, per the Unicode braille layout.
+    const BITS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
+    for s in segments {
+        // Two dots per pixel across, two per pixel down.
+        let d = [(s[0].0 * 2.0, s[0].1 * 2.0), (s[1].0 * 2.0, s[1].1 * 2.0)];
+        line_pixels(&d, |x, y| {
+            if (0..dw).contains(&x) && (0..dh).contains(&y) {
+                let cell = (y / 4 * w + x / 2) as usize;
+                cells[cell] |= BITS[(x % 2) as usize][(y % 4) as usize];
+            }
+        });
+    }
+    cells
+}
+
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    #[test]
+    fn lines_contrast_with_the_background() {
+        let mut img = colorize(
+            4,
+            1,
+            &[0.0, 0.0, 1.0, 1.0],
+            &Norm { min: 0.0, max: 1.0 },
+            &GRAYS,
+        );
+        draw_lines(&mut img, &[[(0.5, 0.5), (3.5, 0.5)]]);
+        assert_eq!(&img.data[0..3], &[255, 255, 255]); // white on black
+        assert_eq!(&img.data[12..15], &[0, 0, 0]); // black on white
+    }
+
+    #[test]
+    fn braille_dots_follow_a_vertical_line() {
+        // One cell (1 x 2 pixels): a vertical line at x = 0.25 sets the left dot column.
+        let cells = braille_cells(1, 2, &[[(0.25, 0.0), (0.25, 1.99)]]);
+        assert_eq!(cells, [0x01 | 0x02 | 0x04 | 0x40]);
+        assert_eq!(braille_cells(2, 2, &[]), [0, 0]);
+    }
+}
