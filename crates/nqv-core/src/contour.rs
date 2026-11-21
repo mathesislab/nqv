@@ -61,6 +61,12 @@ fn steps(lo: f64, hi: f64, step: f64) -> Vec<f64> {
     (first..=last).map(|k| k as f64 * step).collect()
 }
 
+/// Check that contours of `c.var` can be drawn over `var` (same grid, compatible
+/// dimensions), without reading data.
+pub fn check_contour(cat: &Catalog, var: &VarRef, c: &ContourSpec) -> Result<()> {
+    check_overlay(cat.var(var)?, cat.var(&c.var)?, "contour")
+}
+
 /// Contour lines of `c.var` over the map in `view` (same grid, same steps along shared
 /// dimensions, same mask). The field is read at a finer resolution than the view, up to
 /// its own resolution, so lines are smoother than the view's pixels.

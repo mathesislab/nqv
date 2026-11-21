@@ -2,7 +2,7 @@
 //! same function (`COMMANDS` lists the pairs), so both share one vocabulary and
 //! everything shown in the viewer can be reproduced from the command line.
 
-use nqv_core::{Op, Show};
+use nqv_core::{Levels, Op, Show};
 
 /// Each `:` command with its flag and what it does, for help screens.
 pub const COMMANDS: &[(&str, &str, &str)] = &[
@@ -36,6 +36,17 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "--mask \"...\"",
         "hide where all conditions hold; OP = != < <= > >=",
     ),
+    (
+        "contour VAR [step=S | n=N | levels=A,B,..] | off",
+        "--contour \"...\"",
+        "contour lines of VAR over the map (about 10 round levels by default)",
+    ),
+    (
+        "recipe NAME",
+        "-r NAME",
+        "apply a recipe: commands in ~/.nqv/recipes/NAME",
+    ),
+    ("save NAME", "", "save this view's settings as recipe NAME"),
     (
         "show diff | a | b",
         "--show diff|a|b",
@@ -72,11 +83,41 @@ pub enum Command {
     Range(RangeMode),
     /// Mask conditions (all must hold to hide a value); None removes the mask.
     Mask(Option<Vec<MaskCond>>),
+    /// Contour lines of another variable; None removes them.
+    Contour(Option<ContourCmd>),
+    /// Apply the recipe of this name (or path).
+    Recipe(String),
+    /// Save the current settings as a recipe of this name.
+    Save(String),
     /// Position along a named dimension.
     At(String, TimeSel),
     Cmap(String),
     Show(Show),
     Quit,
+}
+
+/// Contours as typed: the variable is resolved by the viewer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContourCmd {
+    pub var: String,
+    pub levels: Levels,
+}
+
+impl ContourCmd {
+    pub fn text(&self) -> String {
+        let nums = |l: &[f64]| {
+            l.iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        match &self.levels {
+            Levels::Auto(10) => self.var.clone(),
+            Levels::Auto(n) => format!("{} n={n}", self.var),
+            Levels::Step(s) => format!("{} step={s}", self.var),
+            Levels::List(l) => format!("{} levels={}", self.var, nums(l)),
+        }
+    }
 }
 
 /// A mask condition as typed: the variable is resolved by the viewer.
@@ -94,7 +135,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym | cmap NAME | mask VAR OP VALUES [and ...]|off | show diff|a|b | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym | cmap NAME | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -106,6 +147,9 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "t" | "time" => parse_time(arg).map(Command::Time),
         "range" => parse_range(arg).map(Command::Range),
         "mask" => parse_mask(arg).map(Command::Mask),
+        "contour" => parse_contour(arg).map(Command::Contour),
+        "recipe" if !arg.is_empty() => Ok(Command::Recipe(arg.to_string())),
+        "save" if !arg.is_empty() => Ok(Command::Save(arg.to_string())),
         "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),
         "cmap" if !arg.is_empty() => Ok(Command::Cmap(arg.to_string())),
         "show" => parse_show(arg).map(Command::Show),
@@ -182,6 +226,44 @@ pub fn shell_quote(s: &str) -> String {
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
     }
+}
+
+/// `off`, or `VAR [step=S | n=N | levels=A,B,...]`.
+pub fn parse_contour(arg: &str) -> Result<Option<ContourCmd>, String> {
+    let arg = arg.trim();
+    if arg == "off" || arg == "none" {
+        return Ok(None);
+    }
+    let bad =
+        |why: &str| format!("contour: {why}; expected VAR [step=S | n=N | levels=A,B,...] or off");
+    let (var, rest) = arg.split_once(char::is_whitespace).unwrap_or((arg, ""));
+    if var.is_empty() {
+        return Err(bad("no variable"));
+    }
+    let rest: String = rest.split_whitespace().collect();
+    let levels = match rest.split_once('=') {
+        None if rest.is_empty() => Levels::Auto(10),
+        Some(("step", v)) => match v.parse::<f64>() {
+            Ok(s) if s > 0.0 => Levels::Step(s),
+            _ => return Err(bad(&format!("step '{v}' is not a positive number"))),
+        },
+        Some(("n", v)) => match v.parse::<usize>() {
+            Ok(n) if n > 0 => Levels::Auto(n),
+            _ => return Err(bad(&format!("n '{v}' is not a positive whole number"))),
+        },
+        Some(("levels", v)) => {
+            let l: Result<Vec<f64>, _> = v.split(',').map(|x| x.parse::<f64>()).collect();
+            match l {
+                Ok(l) if !l.is_empty() => Levels::List(l),
+                _ => return Err(bad(&format!("levels '{v}' are not numbers"))),
+            }
+        }
+        _ => return Err(bad(&format!("cannot read '{rest}'"))),
+    };
+    Ok(Some(ContourCmd {
+        var: var.to_string(),
+        levels,
+    }))
 }
 
 /// `off`, or conditions joined by `and`: `mask_ice != 2`, `basins = 1,3`, `H_ice < 10`.
@@ -291,6 +373,36 @@ mod tests {
         assert_eq!(shell_quote("run/ice.nc"), "run/ice.nc");
         assert_eq!(shell_quote("H_ice < 10"), "'H_ice < 10'");
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn parses_contours() {
+        let c = |var: &str, levels| {
+            Ok(Some(ContourCmd {
+                var: var.into(),
+                levels,
+            }))
+        };
+        assert_eq!(parse_contour("z_srf"), c("z_srf", Levels::Auto(10)));
+        assert_eq!(
+            parse_contour("z_srf step=500"),
+            c("z_srf", Levels::Step(500.0))
+        );
+        assert_eq!(parse_contour("z_srf n=5"), c("z_srf", Levels::Auto(5)));
+        assert_eq!(
+            parse_contour("z_srf levels=0, 1000,2000"),
+            c("z_srf", Levels::List(vec![0.0, 1000.0, 2000.0]))
+        );
+        assert_eq!(parse_contour("off"), Ok(None));
+        assert!(parse_contour("z_srf step=-1").is_err());
+        assert!(parse_contour("z_srf every 5").is_err());
+        assert_eq!(parse("recipe ice"), Ok(Command::Recipe("ice".into())));
+        assert!(parse("save").is_err());
+        let t = ContourCmd {
+            var: "z".into(),
+            levels: Levels::Step(500.0),
+        };
+        assert_eq!(parse_contour(&t.text()), Ok(Some(t)));
     }
 
     #[test]

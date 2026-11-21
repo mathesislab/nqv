@@ -6,19 +6,21 @@ use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
-    Catalog, Cond, Kind, Mask, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec,
-    cell_at, check_mask, fit_size, masked, netcdf_files, range, series, series_range, value, view,
+    Catalog, Cond, ContourSpec, Kind, Mask, RangeEstimate, Segment, Series, SeriesSpec, Show,
+    VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours, fit_size, masked,
+    netcdf_files, range, series, series_range, value, view,
 };
-use nqv_render::{CMAPS, Norm, Rgba, colorize};
+use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines};
 use ratatui::DefaultTerminal;
 use ratatui::layout::{Position, Rect, Size};
 use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
 use crate::browser::{Action, Browser};
-use crate::command::{self, Command, MaskCond, RangeMode, TimeSel};
+use crate::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel};
 use crate::fuzzy;
 use crate::png;
+use crate::recipe;
 use crate::ui;
 
 /// What the main area shows for one state and screen area.
@@ -39,12 +41,22 @@ pub struct Map {
 pub enum MapImage {
     /// Encoded for an image protocol.
     Pixels(Protocol),
-    /// Drawn as half-blocks, two pixels per cell.
-    Blocks(Rgba),
+    /// Drawn as half-blocks, two pixels per cell; cells crossed by contour lines show
+    /// these braille patterns instead (0: none).
+    Blocks { img: Rgba, braille: Vec<u8> },
 }
 
 /// Everything a cached plot depends on.
-type FrameKey = (VarRef, Vec<usize>, usize, RangeMode, Show, Mask, Rect);
+type FrameKey = (
+    VarRef,
+    Vec<usize>,
+    usize,
+    RangeMode,
+    Show,
+    Mask,
+    Option<ContourSpec>,
+    Rect,
+);
 
 pub struct Frame {
     pub key: FrameKey,
@@ -96,6 +108,10 @@ pub struct App {
     /// The mask applied to the current variable; empty when `mask_error` says why not.
     pub active_mask: Mask,
     pub mask_error: Option<String>,
+    /// Contours as typed (`:contour`), resolved to `active_contour` for each draw.
+    pub contour: Option<ContourCmd>,
+    pub active_contour: Option<ContourSpec>,
+    pub contour_error: Option<String>,
     pub picker: Option<VarPicker>,
     /// Text typed after `:`, while the command line is open.
     pub cmdline: Option<String>,
@@ -151,6 +167,9 @@ impl App {
             mask: vec![],
             active_mask: Mask::default(),
             mask_error: None,
+            contour: None,
+            active_contour: None,
+            contour_error: None,
             origin: Origin::default(),
             help: false,
             frame: None,
@@ -569,6 +588,29 @@ impl App {
             Ok(m) => (self.active_mask, self.mask_error) = (m, None),
             Err(e) => (self.active_mask, self.mask_error) = (Mask::default(), Some(e)),
         }
+        let contour = self.contour.as_ref().map(|c| {
+            let spec = ContourSpec {
+                var: self.resolve(&c.var)?,
+                levels: c.levels.clone(),
+            };
+            check_contour(&self.cat, &self.var, &spec)
+                .map(|_| spec)
+                .map_err(|e| format!("{e:#}"))
+        });
+        match contour.transpose() {
+            Ok(c) => (self.active_contour, self.contour_error) = (c, None),
+            Err(e) => (self.active_contour, self.contour_error) = (None, Some(e)),
+        }
+    }
+
+    /// Contour segments over the map `spec`, if contours are on; errors leave them out.
+    fn contour_segments(&self, spec: &ViewSpec) -> Vec<Segment> {
+        let Some(c) = &self.active_contour else {
+            return vec![];
+        };
+        contours(&self.cat, spec, c)
+            .map(|lines| lines.into_iter().flat_map(|l| l.segments).collect())
+            .unwrap_or_default()
     }
 
     /// Variable named exactly `name` (or `file:name`), preferring the current file.
@@ -590,7 +632,7 @@ impl App {
         };
         found
             .map(|(r, _)| r.clone())
-            .ok_or_else(|| format!("mask: no variable '{name}'"))
+            .ok_or_else(|| format!("no variable '{name}'"))
     }
 
     /// Re-read the value at the clicked cell when the indices changed, and recompute
@@ -621,6 +663,7 @@ impl App {
             self.range_mode,
             self.cat.show,
             self.active_mask.clone(),
+            self.active_contour.clone(),
             area,
         );
         if self.panel.as_ref().is_some_and(|f| f.key == key) {
@@ -645,6 +688,7 @@ impl App {
             self.range_mode,
             self.cat.show,
             self.active_mask.clone(),
+            self.active_contour.clone(),
             area,
         );
         if self.frame.as_ref().is_some_and(|f| f.key == key) {
@@ -718,6 +762,17 @@ impl App {
                 };
                 self.cmap = i;
             }
+            Command::Contour(c) => self.contour = c,
+            Command::Recipe(name) => {
+                for c in recipe::load(&name)? {
+                    self.apply(c)?;
+                }
+            }
+            Command::Save(name) => {
+                let lines: Vec<String> = self.settings().into_iter().map(|(l, _)| l).collect();
+                let p = recipe::save(&name, &lines)?;
+                self.message = Some(format!("saved recipe {} ({})", name, p.display()));
+            }
             Command::Show(show) => {
                 if !self.cat.compare {
                     return Err("show: only in a comparison (--diff)".into());
@@ -785,6 +840,19 @@ impl App {
             a.push("--vs".into());
             a.extend(o.vs.iter().map(|p| p.display().to_string()));
         }
+        a.extend(self.settings().into_iter().flat_map(|(_, flags)| flags));
+        let quoted: Vec<String> = a.iter().map(|s| command::shell_quote(s)).collect();
+        quoted.join(" ")
+    }
+
+    /// This view's settings as recipe lines (`:` commands) with the equivalent flags:
+    /// variable, steps, clicked cell, comparison side, colours, mask and contours.
+    /// Settings at their defaults are left out.
+    fn settings(&self) -> Vec<(String, Vec<String>)> {
+        let mut out: Vec<(String, Vec<String>)> = vec![];
+        let mut add = |cmd: &str, arg: String, flag: &str, value: String| {
+            out.push((format!("{cmd} {arg}"), vec![flag.to_string(), value]));
+        };
         let v = self.var_info();
         let var = match self.cat.sources.len() {
             1 => v.name.clone(),
@@ -796,51 +864,54 @@ impl App {
                 format!("{file}:{}", v.name)
             }
         };
-        a.extend(["-v".into(), var]);
-        for (n, &k) in v.step_dims().iter().enumerate() {
-            if self.index[k] == 0 {
-                continue;
-            }
-            let at = format!("@{}", self.index[k] + 1);
-            match n {
-                0 => a.extend(["-t".into(), at]),
-                _ => a.extend(["--at".into(), format!("{}={at}", v.dims[k].name)]),
-            }
-        }
-        if let (Some(p), Kind::Map { y, x }) = (&self.probe, v.kind()) {
-            for (k, i) in [(y, p.cell.0), (x, p.cell.1)] {
-                a.extend(["--at".into(), format!("{}=@{}", v.dims[k].name, i + 1)]);
-            }
-        }
+        add("v", var.clone(), "-v", var);
         let show = if self.cat.compare {
             self.cat.show
         } else {
             Show::A
         };
         if self.cat.compare && show != Show::Diff {
-            a.extend([
-                "--show".into(),
-                if show == Show::A { "a" } else { "b" }.into(),
-            ]);
+            let side = if show == Show::A { "a" } else { "b" };
+            add("show", side.into(), "--show", side.into());
+        }
+        for (n, &k) in v.step_dims().iter().enumerate() {
+            if self.index[k] == 0 {
+                continue;
+            }
+            let at = format!("@{}", self.index[k] + 1);
+            let dim_at = format!("{}={at}", v.dims[k].name);
+            match n {
+                0 => add("t", at.clone(), "-t", at),
+                _ => add("at", dim_at.clone(), "--at", dim_at),
+            }
+        }
+        if let (Some(p), Kind::Map { y, x }) = (&self.probe, v.kind()) {
+            for (k, i) in [(y, p.cell.0), (x, p.cell.1)] {
+                let dim_at = format!("{}=@{}", v.dims[k].name, i + 1);
+                add("at", dim_at.clone(), "--at", dim_at);
+            }
         }
         let (cmap, range) = colour_defaults(show);
         if self.cmap != cmap {
-            a.extend(["--cmap".into(), CMAPS[self.cmap].name.into()]);
+            let name = CMAPS[self.cmap].name.to_string();
+            add("cmap", name.clone(), "--cmap", name);
         }
         if self.range_mode != range {
-            let r = match self.range_mode {
-                RangeMode::Auto => "auto".into(),
-                RangeMode::Symmetric => "sym".into(),
-                RangeMode::Fixed(lo, hi) => format!("{lo},{hi}"),
+            let (line, flag) = match self.range_mode {
+                RangeMode::Auto => ("auto".into(), "auto".into()),
+                RangeMode::Symmetric => ("sym".into(), "sym".into()),
+                RangeMode::Fixed(lo, hi) => (format!("{lo} {hi}"), format!("{lo},{hi}")),
             };
-            a.extend(["--range".into(), r]);
+            add("range", line, "--range", flag);
         }
         if !self.mask.is_empty() {
             let m: Vec<String> = self.mask.iter().map(|c| c.text()).collect();
-            a.extend(["--mask".into(), m.join(" and ")]);
+            add("mask", m.join(" and "), "--mask", m.join(" and "));
         }
-        let quoted: Vec<String> = a.iter().map(|s| command::shell_quote(s)).collect();
-        quoted.join(" ")
+        if let Some(c) = &self.contour {
+            add("contour", c.text(), "--contour", c.text());
+        }
+        out
     }
 
     /// Keep the command for the last view in ~/.cache/nqv/last-command; errors are ignored.
@@ -857,7 +928,10 @@ impl App {
     pub fn write_png(&mut self, path: &Path, max: (u32, u32)) -> Result<String> {
         self.update_mask();
         if let Some(e) = &self.mask_error {
-            bail!("{e}");
+            bail!("mask: {e}");
+        }
+        if let Some(e) = &self.contour_error {
+            bail!("contour: {e}");
         }
         let v = self.var_info().clone();
         let src = self.var.source;
@@ -900,6 +974,9 @@ impl App {
             let m: Vec<String> = self.mask.iter().map(|c| c.text()).collect();
             sub.push(format!("mask: {}", m.join(" and ")));
         }
+        if let (Some(c), Kind::Map { .. }) = (&self.contour, v.kind()) {
+            sub.push(format!("contours: {}", c.text()));
+        }
         let subtitle = sub.join("   ");
         let cmap = &CMAPS[self.cmap];
         let img = match v.kind() {
@@ -914,7 +991,8 @@ impl App {
                 let raster = view(&self.cat, &spec)?;
                 let rg = range(&self.cat, &spec)?;
                 let norm = self.norm(rg.min, rg.max);
-                let image = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
+                let mut image = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
+                draw_lines(&mut image, &self.contour_segments(&spec));
                 // Round coordinate values (or 1-based indices) as ticks, placed linearly
                 // between the cells shown at the two ends of each edge (regular grids).
                 let at = |k: usize, i: usize| {
@@ -1023,14 +1101,20 @@ impl App {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),
             Ok((raster, rg)) => {
                 let norm = self.norm(rg.min, rg.max);
-                let rgba = colorize(raster.w, raster.h, &raster.values, &norm, &CMAPS[self.cmap]);
+                let mut rgba =
+                    colorize(raster.w, raster.h, &raster.values, &norm, &CMAPS[self.cmap]);
                 let (w, h) = (rgba.w, rgba.h);
+                let segments = self.contour_segments(&spec);
                 let (image, rect) = match out {
                     Output::Blocks { .. } => (
-                        MapImage::Blocks(rgba),
+                        MapImage::Blocks {
+                            img: rgba,
+                            braille: braille_cells(w, h, &segments),
+                        },
                         ui::centered(area, w as u16, h.div_ceil(2) as u16),
                     ),
                     Output::Pixels(p) => {
+                        draw_lines(&mut rgba, &segments);
                         let fs = p.font_size();
                         let cols = w.div_ceil(fs.width as u32) as u16;
                         let rows = h.div_ceil(fs.height as u32) as u16;

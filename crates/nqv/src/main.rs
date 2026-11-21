@@ -5,6 +5,7 @@ mod browser;
 mod command;
 mod fuzzy;
 mod png;
+mod recipe;
 mod ui;
 
 use std::io::stdout;
@@ -77,6 +78,20 @@ struct Args {
         help_heading = "View"
     )]
     mask: Option<String>,
+    /// Contour lines of another variable: "VAR [step=S | n=N | levels=A,B,..]"
+    #[arg(
+        long,
+        value_name = "SPEC",
+        allow_hyphen_values = true,
+        help_heading = "View"
+    )]
+    contour: Option<String>,
+    /// Apply a recipe (commands in ~/.nqv/recipes/NAME, or a file) before the options here
+    #[arg(short, long, value_name = "NAME", help_heading = "View")]
+    recipe: Option<String>,
+    /// List the recipes in ~/.nqv/recipes and exit
+    #[arg(long, help_heading = "View")]
+    recipes: bool,
     /// In a comparison, show A - B (diff), A or B
     #[arg(long, value_name = "diff|a|b", help_heading = "View")]
     show: Option<String>,
@@ -135,6 +150,19 @@ Examples:
   nqv -j seg1/ seg2/ seg3/ -v V_ice
   nqv -j run1/seg* --vs run2/seg* -v V_ice
   nqv run/ice.nc -v H_ice -t 1990 --png H_ice_1990.png
+  nqv run/ice.nc -v uxy_s --mask 'f_ice < 0.5' --contour 'z_srf step=500'
+  nqv -r ice run/ --png ice.png
+
+Recipes:
+  A recipe is a file of viewer commands (the : syntax), one per line, # for comments,
+  in ~/.nqv/recipes/NAME. -r NAME applies it; options given here are applied after it.
+  In the viewer, :recipe NAME applies one and :save NAME writes the current settings.
+  Example ~/.nqv/recipes/ice:
+    # Ice sheet: surface velocity on the ice, surface elevation contours
+    v ice:uxy_s
+    mask f_ice < 0.5
+    contour z_srf step=500
+    range 0 1000
 
 In the viewer, ? lists the keys and : commands (the same as these options),
 and p prints the command for the current view.";
@@ -174,6 +202,17 @@ impl Output {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.recipes {
+        let list = recipe::list();
+        match recipe::dir() {
+            Some(d) if list.is_empty() => println!("no recipes in {}", d.display()),
+            _ => {}
+        }
+        for (name, about) in list {
+            println!("{name:<16} {about}");
+        }
+        return Ok(());
+    }
     let gfx = match (args.gfx, std::env::var("NQV_GFX")) {
         (Some(g), _) => g,
         (None, Ok(s)) if !s.is_empty() => match Gfx::from_str(&s, true) {
@@ -186,7 +225,7 @@ fn main() -> Result<()> {
     let app = match args.paths.is_empty() {
         true => None,
         false => {
-            let mut app = App::new(open(&args.paths, &args)?, args.var.as_deref())?;
+            let mut app = App::new(open(&args.paths, &args)?, None)?;
             app.origin = Origin {
                 paths: args.paths.clone(),
                 diff: args.diff,
@@ -233,6 +272,12 @@ fn main() -> Result<()> {
 /// sets default colours), then positions, then colours and mask.
 fn commands(args: &Args) -> Result<Vec<Command>, String> {
     let mut cmds = vec![];
+    if let Some(r) = &args.recipe {
+        cmds.extend(recipe::load(r)?);
+    }
+    if let Some(v) = &args.var {
+        cmds.push(Command::Var(v.clone()));
+    }
     if let Some(s) = &args.show {
         cmds.push(Command::Show(command::parse_show(s)?));
     }
@@ -251,6 +296,9 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
     }
     if let Some(m) = &args.mask {
         cmds.push(Command::Mask(command::parse_mask(m)?));
+    }
+    if let Some(c) = &args.contour {
+        cmds.push(Command::Contour(command::parse_contour(c)?));
     }
     Ok(cmds)
 }

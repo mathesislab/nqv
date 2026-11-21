@@ -12,7 +12,9 @@ use anyhow::Result;
 pub use crate::catalog::{
     Catalog, DirEntry, Other, Show, Source, VarRef, is_netcdf, list_dir, netcdf_files,
 };
-pub use crate::contour::{ContourLine, ContourSpec, Levels, Segment, contours, nice_ticks};
+pub use crate::contour::{
+    ContourLine, ContourSpec, Levels, Segment, check_contour, contours, nice_ticks,
+};
 pub use crate::join::{JoinedReader, record_dim};
 pub use crate::mask::{Cond, Mask, Op, check_mask};
 pub use crate::netcdf::NetcdfReader;

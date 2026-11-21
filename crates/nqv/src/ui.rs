@@ -2,7 +2,7 @@
 //! line, variable picker.
 
 use nqv_core::{DimInfo, Kind, Series, Show, finite_range};
-use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256};
+use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -64,7 +64,9 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
         match &fr.plot {
             Plot::Map(m) => match &m.image {
                 MapImage::Pixels(proto) => f.render_widget(Image::new(proto), m.rect),
-                MapImage::Blocks(img) => draw_blocks(f, img, m.rect, truecolor),
+                MapImage::Blocks { img, braille } => {
+                    draw_blocks(f, img, braille, m.rect, truecolor)
+                }
             },
             Plot::Line(_) => {
                 if let Kind::Series { along } = v.kind() {
@@ -149,6 +151,10 @@ fn draw_help(f: &mut Frame) {
     lines.push(
         Line::raw("VALUE: coordinate value (1990, -21000)   @INDEX: 1-based, @-1 last").dim(),
     );
+    let recipes: Vec<String> = crate::recipe::list().into_iter().map(|(n, _)| n).collect();
+    if !recipes.is_empty() {
+        lines.push(Line::raw(format!("recipes (:recipe NAME): {}", recipes.join(", "))).dim());
+    }
     lines.push(Line::raw("any key closes; nqv --help has examples").dim());
     let area = f.area();
     let r = centered(
@@ -290,8 +296,10 @@ fn color(c: [u8; 3], truecolor: bool) -> Color {
 }
 
 /// Two image rows per cell: '▀' with the top pixel as foreground, the bottom one as
-/// background. `r` is the rectangle from `centered`.
-fn draw_blocks(f: &mut Frame, img: &Rgba, r: Rect, truecolor: bool) {
+/// background. Cells crossed by contour lines (`braille` not 0) show the braille pattern
+/// instead, in a colour contrasting with the mean of the two pixels behind it. `r` is the
+/// rectangle from `centered`.
+fn draw_blocks(f: &mut Frame, img: &Rgba, braille: &[u8], r: Rect, truecolor: bool) {
     let px = |x: u32, y: u32| {
         let i = 4 * (y * img.w + x) as usize;
         [img.data[i], img.data[i + 1], img.data[i + 2]]
@@ -300,13 +308,27 @@ fn draw_blocks(f: &mut Frame, img: &Rgba, r: Rect, truecolor: bool) {
     for cy in 0..r.height {
         for cx in 0..r.width {
             let (x, y) = (cx as u32, 2 * cy as u32);
+            let top = px(x, y);
+            let bottom = (y + 1 < img.h).then(|| px(x, y + 1));
             let cell = &mut buf[(r.x + cx, r.y + cy)];
-            cell.set_char('▀').set_fg(color(px(x, y), truecolor));
-            if y + 1 < img.h {
-                cell.set_bg(color(px(x, y + 1), truecolor));
-            } else {
-                cell.set_bg(Color::Reset);
+            let dots = braille
+                .get((cy as u32 * img.w + x) as usize)
+                .copied()
+                .unwrap_or(0);
+            if dots != 0 {
+                let b = bottom.unwrap_or(top);
+                let mean = std::array::from_fn(|k| ((top[k] as u16 + b[k] as u16) / 2) as u8);
+                let ch = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
+                cell.set_char(ch)
+                    .set_fg(color(contrast(mean), truecolor))
+                    .set_bg(color(mean, truecolor));
+                continue;
             }
+            cell.set_char('▀').set_fg(color(top, truecolor));
+            match bottom {
+                Some(b) => cell.set_bg(color(b, truecolor)),
+                None => cell.set_bg(Color::Reset),
+            };
         }
     }
 }
@@ -382,6 +404,13 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         s.push(match &app.mask_error {
             None => Span::raw(text).italic(),
             Some(e) => Span::raw(format!("{text} (not applied: {e})")).red(),
+        });
+    }
+    if let Some(c) = &app.contour {
+        let text = format!("  contour: {}", c.text());
+        s.push(match &app.contour_error {
+            None => Span::raw(text).italic(),
+            Some(e) => Span::raw(format!("{text} (not drawn: {e})")).red(),
         });
     }
     let mode = match app.range_mode {

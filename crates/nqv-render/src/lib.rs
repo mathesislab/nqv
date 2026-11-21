@@ -210,11 +210,13 @@ fn line_pixels(s: &Segment, mut put: impl FnMut(i64, i64)) {
 /// the colour under it.
 pub fn draw_lines(img: &mut Rgba, segments: &[Segment]) {
     let (w, h) = (img.w as i64, img.h as i64);
+    // Contrast with the map, not with lines already drawn (segments share pixels).
+    let map = img.data.clone();
     for s in segments {
         line_pixels(s, |x, y| {
             if (0..w).contains(&x) && (0..h).contains(&y) {
                 let i = 4 * (y * w + x) as usize;
-                let c = contrast([img.data[i], img.data[i + 1], img.data[i + 2]]);
+                let c = contrast([map[i], map[i + 1], map[i + 2]]);
                 img.data[i..i + 3].copy_from_slice(&c);
             }
         });
@@ -257,7 +259,11 @@ mod line_tests {
             &Norm { min: 0.0, max: 1.0 },
             &GRAYS,
         );
-        draw_lines(&mut img, &[[(0.5, 0.5), (3.5, 0.5)]]);
+        // Two segments sharing their middle pixels: still white on black, black on white.
+        draw_lines(
+            &mut img,
+            &[[(0.5, 0.5), (2.5, 0.5)], [(1.5, 0.5), (3.5, 0.5)]],
+        );
         assert_eq!(&img.data[0..3], &[255, 255, 255]); // white on black
         assert_eq!(&img.data[12..15], &[0, 0, 0]); // black on white
     }
