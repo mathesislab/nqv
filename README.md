@@ -1,4 +1,4 @@
-# nqv
+# nqv: NetCDF Quick View
 
 Quick-look viewer for NetCDF files that runs in the terminal you are already in, local or over ssh. No X11 needed.
 

@@ -119,6 +119,13 @@ h1 {
   margin: 0 0 18px;
 }
 
+.kicker {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 600;
+}
+
 .lead {
   max-width: 680px;
   margin: 0 auto;
