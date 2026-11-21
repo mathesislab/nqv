@@ -1,0 +1,167 @@
+# nqv architecture
+
+Status: draft for review, 2026-11-21. Background and prior art: [initial-discussion.md](initial-discussion.md).
+
+## Goals
+
+- A quick-look viewer for NetCDF (later Zarr, HDF5) that replaces ncview without X11.
+- Launched from the ssh shell on the HPC where the file was found: `nqv file.nc`, look, `q`, back at the prompt.
+- Works in any terminal. A better terminal or a local app gives a better picture, never a different workflow.
+- Scales to large structured and unstructured grids: cost follows screen size, not grid size.
+- Simple screen, with keys for the choices that matter (variable, slice, range, colour map, region).
+
+## Layers
+
+Everything is one pipeline. Display front ends differ only in where the pipeline is cut and which output encoder sits at the end.
+
+```
+source(s) ─► nqv-core ─► Raster ─► nqv-render ─► RGBA ─► encoder
+             read, slice,   values    norm, cmap,          terminal tiers,
+             grid lookup,   + mask    colour bar           native window,
+             ranges, probe  at screen                      browser canvas
+             size
+```
+
+| Crate | Role | Depends on |
+|---|---|---|
+| `nqv-core` | Catalog (files, groups, variables, grids), navigation, slicing, pixel→cell lookup, ranges, probes, diffs, caching, prefetch. No display code. | NetCDF reader, kiddo, rayon |
+| `nqv-render` | Normalisation, colour maps, colour bar, line plots. Pure functions; also builds to WASM. | none |
+| `nqv-proto` | Protocol messages and Raster encoding (f16 + zstd). | core types |
+| `nqv` | The single HPC binary: terminal UI, browse mode, `nqv serve --stdio`. | all of the above, ratatui |
+| `nqv-local` | Laptop agent: native window and web client, reached from the HPC via a forwarded socket. | proto, render |
+
+Cut points:
+
+- **Terminal (default).** Whole pipeline in one process on the HPC. No protocol involved.
+- **Remote.** Cut after `Raster`. Values cross the wire, the client colours them, so colour and range changes are instant.
+- **Mesh (later).** Send the mesh once, then per-step node values, render on the GPU. A separate negotiated wire format.
+
+The `Raster` (values + mask on the view's pixel grid) is the common format for all grid types. Regular grids produce it with a strided read; curvilinear and unstructured grids with a cached pixel→cell index (KD-tree, built once per grid and view, stored in `~/.cache/nqv` keyed by grid hash).
+
+## Terminal output tiers
+
+Chosen at start-up by querying the terminal; `--gfx=kitty|sixel|iterm|blocks|blocks256` overrides.
+
+| Tier | Resolution | Notes |
+|---|---|---|
+| kitty graphics | full pixels | Ghostty, kitty, WezTerm, Konsole (partial) |
+| sixel | full pixels | iTerm2, WezTerm, foot, xterm (configured), Windows Terminal, VS Code (setting) |
+| iTerm2 inline | full pixels | iTerm2, WezTerm |
+| half-block `▀`, 24-bit | 2 px per cell | nearly every terminal; survives tmux/screen |
+| half-block, 256 colour | 2 px per cell | fallback |
+
+The half-block tier is the guaranteed path and is a first-class target, not a degraded mode. Line plots (1D variables) draw with braille characters in every tier. Support per terminal is still to be verified (see Open questions).
+
+## Data model
+
+```
+Catalog ─► Source ─► Group ─► Variable
+                     │
+                     └─ Grid (shared by variables with identical coordinates)
+```
+
+- **Source**: one file, or a set of files stitched along a record dimension (`nqv run/*.nc` where files share a structure and differ only in time).
+- **Group**: a NetCDF-4 group, or a whole file when a folder is opened as a collection.
+- **Variable**: any numeric variable. Its *view kind* follows from the dimensions left free after fixing the others: two spatial dims → map, one dim → line plot.
+- **Grid**: identified by a hash of coordinate *values* (and `grid_mapping`), not by dimension names. Example: `CLIMBER-X_SMB_NH-16KM_*.nc` uses `x,y` and `ice_NH-16KM.nc` uses `xc,yc`, but both are the same 781×781 grid.
+
+### Folder as a collection
+
+`nqv .` on a run folder opens every NetCDF file as one catalog, each file a group. The variable picker (`v`, fuzzy search) searches across all files and shows `file:var`. Non-NetCDF files are ignored; subfolders are not entered unless asked (`--recursive`).
+
+Reference case, a CLIMBER-X run on Albedo (`.../climber-x/output/lgm_ice_nh_coords/igeo2`):
+
+- 32 NetCDF files, mixed netCDF-4 and classic formats.
+- At least five grids: 5° lat/lon (72×36, with staggered `lonu`/`latv`), 0.125° (2880×1440), 512×256 (VILMA), 16 km polar stereographic (781×781 with `x2D`/`y2D` and `crs`), and a 171×171 `K,L` grid.
+- Record dimension named `time` or `epoch`.
+- `*_ts.nc` files are mostly scalar time series (`lat=1, lon=1`), but `ice_NH-16KM_ts.nc` holds 501 steps of 781×781 maps. View kinds must come from dimensions, never from file names.
+- Several files have zero records (`time = UNLIMITED (0)`). They must open and say so, not fail.
+
+Variables on different grids can still be combined *for display*, because each becomes a `Raster` on the same view pixel grid. That makes cross-grid masking, differences and overlays possible when both grids have geographic coordinates. The result is a nearest-pixel approximation, which is fine for viewing.
+
+## Navigation
+
+Navigation lives in the core and the protocol, so every front end can change file or folder without going back to the shell.
+
+- `o`: file browser rooted at the current file's folder. Shows each highlighted file's variables and dimensions (no separate `ncdump -h`).
+- `O`: open a folder as a collection.
+- `[` / `]`: previous / next file in the folder (same variable and slice where it exists).
+- Paths are always HPC paths. Remote clients navigate the server's file system, limited to what the user can read.
+
+## Launch
+
+- `nqv file.nc [var]`, `nqv run/*.nc`, `nqv .` (collection), `nqv` (browser on cwd).
+- `nqv f.nc temp -t -1 -z 100 --region arctic`: jump straight to a view. Every view can print the command line that reproduces it.
+- Opener for `.nc` in yazi/lf/ranger; target for fzf.
+- **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Requires `AllowStreamLocalForwarding` on the cluster; to verify.)
+- `nqv serve --stdio`: for clients that start the server themselves over `ssh host nqv serve --stdio`.
+
+## Core API (sketch)
+
+```rust
+// Catalog and navigation
+fn open(target: &Target, cfg: &Config) -> Result<Catalog>      // file, file set, or folder
+fn list_dir(path: &Path) -> Result<Vec<DirEntry>>              // with cheap header summaries
+impl Catalog {
+    fn tree(&self) -> &[Source];                               // sources → groups → variables
+    fn grid(&self, var: VarRef) -> &Grid;
+}
+
+// Views
+struct ViewSpec {
+    var: VarRef,
+    fixed: Vec<(DimRef, usize)>,      // indices for the non-displayed dims
+    region: Region, proj: Proj,
+    size: (u32, u32),                 // pixels
+    diff: Option<VarRef>,             // d: difference with another variable
+}
+fn view(cat: &Catalog, spec: &ViewSpec) -> Result<View>        // Raster (map) or Series (line)
+fn range(cat: &Catalog, spec: &ViewSpec) -> RangeEstimate      // sampled now, exact later
+fn probe(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Probe  // value, lon/lat, cell index
+
+// nqv-render
+fn colorize(r: &Raster, norm: &Norm, cmap: &Cmap) -> Rgba
+```
+
+Protocol methods mirror this: `list_dir`, `open`, `close`, `tree`, `view`, `range`, `probe`, `series` (time series at a point), `cancel`. Requests are cancellable, so fast scrolling through time drops stale work. Messages are framed like LSP; Raster payloads are binary.
+
+## Big files
+
+- Read only the current slice; strided reads for zoomed-out views, aligned with the file's chunking.
+- Prefetch the next record in the background.
+- Colour range from a sample first; exact range computed in the background.
+- Bounded memory on login nodes; `--srun` for very large cases.
+- Find unstructured meshes automatically (search parent folders), with `.nqv.toml` per experiment as override.
+
+## Screen and keys
+
+```
+┌──────────────────────── map ────────────────────────┐
+│                                                     │
+└─────────────────────────────────────────────────────┘
+ice:H_ice  t=124/501  [0, 3500] viridis
+←→ time  ↑↓ level  v var  c cmap  r range  / region  o open  ? help
+```
+
+`v` variable (fuzzy, across the collection) · `c` colour map · `r` range: auto / symmetric / typed · `/` region and projection · click: value, lon/lat, cell index · space: animate · `s` save PNG + command line · `d` difference with a second variable or file · `o`/`O`/`[`/`]` navigation.
+
+## Wish list (not in v1)
+
+- **Masking by variable.** `mask = X` hides cells where a chosen mask variable equals X; `mask != X` hides cells where it doesn't. Example: `ice:mask_ice != 2` to show only dynamic ice. Needs rules for the mask's own free dimensions (same time index when the time axes match, else a fixed index) and for masks on another grid (via the Raster, see above). Later perhaps simple expressions. To be filed as a GitHub issue.
+- Overlays: contours of one variable on another, possibly from another grid.
+- Mesh-on-GPU wire format (design 3) for zooming into very large unstructured meshes.
+- Zarr and plain HDF5 sources.
+
+## Open questions
+
+- Pure-Rust NetCDF-4 reader (static musl binary) vs. the `netcdf` crate linking libnetcdf/HDF5.
+- Actual terminal support for each output tier, including tmux behaviour.
+- Whether Albedo and Levante allow Unix-socket forwarding (`AllowStreamLocalForwarding`).
+- Rules for auto-detecting "stitch along time" versus "collection" for a set of files; `--stitch` / `--collection` as overrides.
+
+## Build order
+
+1. Spike: `nqv file.nc` with core slice reading, render, and the half-block + kitty tiers with detection. Test from Albedo into Terminal.app and Ghostty. The real `Raster` type from the start.
+2. Core proper: catalog, collections, navigation, lazy reads, range estimates, prefetch, mesh index cache.
+3. Protocol and `nqv serve --stdio`; socket handoff to `nqv-local`.
+4. Native and web clients.
