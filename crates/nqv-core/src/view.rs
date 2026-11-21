@@ -13,6 +13,19 @@ pub struct ViewSpec {
     pub index: Vec<usize>,
     pub size: (u32, u32),
     pub mask: Mask,
+    pub interp: Interp,
+}
+
+/// How a map is resampled to the view size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Interp {
+    /// Each pixel shows one cell.
+    #[default]
+    Nearest,
+    /// Where the view has more pixels than the data, pixels blend the four surrounding
+    /// cells; where it has fewer, nearest. Pixels whose nearest cell is missing stay
+    /// missing, so mask and coast outlines stay sharp.
+    Bilinear,
 }
 
 /// A line view: values along dimension `along`, other dimensions fixed by `index`.
@@ -148,6 +161,62 @@ impl Sampling {
     fn col(&self, px: usize) -> usize {
         nearest(px, self.w, self.mx)
     }
+
+    /// Fractional row of the strided read at the centre of output row `py`, for
+    /// bilinear interpolation: (lower row, upper row, weight of the upper one). Nearest
+    /// when the view does not have more rows than the read.
+    fn row_frac(&self, py: usize) -> (usize, usize, f32) {
+        if self.h <= self.my {
+            let r = self.row(py);
+            return (r, r, 0.0);
+        }
+        let f = frac(py, self.h, self.my);
+        let f = if self.flip {
+            (self.my - 1) as f32 - f
+        } else {
+            f
+        };
+        let r0 = f.floor() as usize;
+        (r0, (r0 + 1).min(self.my - 1), f - r0 as f32)
+    }
+
+    fn col_frac(&self, px: usize) -> (usize, usize, f32) {
+        if self.w <= self.mx {
+            let c = self.col(px);
+            return (c, c, 0.0);
+        }
+        let f = frac(px, self.w, self.mx);
+        let c0 = f.floor() as usize;
+        (c0, (c0 + 1).min(self.mx - 1), f - c0 as f32)
+    }
+}
+
+/// Source position (cell centres at whole numbers) of output pixel `i` of `n` over `m`
+/// cells, clamped to the cells.
+fn frac(i: usize, n: usize, m: usize) -> f32 {
+    ((i as f32 + 0.5) * m as f32 / n as f32 - 0.5).clamp(0.0, (m - 1) as f32)
+}
+
+/// Bilinear blend of the four corners with weights `tx`, `ty` towards the second ones;
+/// missing corners are left out, and the result is missing if `nearest` is.
+fn blend(v: [f32; 4], tx: f32, ty: f32, nearest: f32) -> f32 {
+    if !nearest.is_finite() {
+        return f32::NAN;
+    }
+    let w = [
+        (1.0 - tx) * (1.0 - ty),
+        tx * (1.0 - ty),
+        (1.0 - tx) * ty,
+        tx * ty,
+    ];
+    let (mut sum, mut wsum) = (0.0, 0.0);
+    for (x, w) in v.iter().zip(w) {
+        if x.is_finite() {
+            sum += x * w;
+            wsum += w;
+        }
+    }
+    if wsum > 0.0 { sum / wsum } else { nearest }
 }
 
 /// Read the map slice in `spec` with a stride matched to the output size, then
@@ -184,11 +253,26 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
             data[c * my + r]
         }
     };
-    let cols: Vec<usize> = (0..s.w).map(|px| s.col(px)).collect();
     let mut values = Vec::with_capacity(s.w * s.h);
-    for py in 0..s.h {
-        let r = s.row(py);
-        values.extend(cols.iter().map(|&c| at(r, c)));
+    match spec.interp {
+        Interp::Nearest => {
+            let cols: Vec<usize> = (0..s.w).map(|px| s.col(px)).collect();
+            for py in 0..s.h {
+                let r = s.row(py);
+                values.extend(cols.iter().map(|&c| at(r, c)));
+            }
+        }
+        Interp::Bilinear => {
+            let cols: Vec<(usize, usize, f32)> = (0..s.w).map(|px| s.col_frac(px)).collect();
+            for py in 0..s.h {
+                let (r0, r1, ty) = s.row_frac(py);
+                values.extend(cols.iter().map(|&(c0, c1, tx)| {
+                    let v = [at(r0, c0), at(r0, c1), at(r1, c0), at(r1, c1)];
+                    let near = v[(tx >= 0.5) as usize + 2 * (ty >= 0.5) as usize];
+                    blend(v, tx, ty, near)
+                }));
+            }
+        }
     }
     if !spec.mask.is_empty() {
         check_mask(cat, &spec.var, &spec.mask)?;
@@ -200,6 +284,7 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
                 index: mask_index(var, &spec.index, m)?,
                 size: spec.size,
                 mask: Mask::default(),
+                interp: Interp::Nearest,
             };
             cond_values.push(view_as(cat, &mspec, mask_show(show))?.values);
         }
@@ -583,6 +668,7 @@ mod tests {
             index: vec![1, 0, 0],
             size: (4, 3),
             mask: Mask::default(),
+            interp: Interp::Nearest,
         };
         assert!(view(&c, &spec).unwrap().values.iter().all(|&v| v == -5.0));
         // Coordinates are not differenced: increasing y still puts y = 2 on top.
@@ -626,6 +712,7 @@ mod tests {
             index: vec![1, 0, 0],
             size: (4, 3),
             mask: Mask { conds },
+            interp: Interp::Nearest,
         };
         // g = 10 y + x: hide g >= 21, i.e. row 2 from x = 1.
         let r = view(&c, &spec(vec![cond("g", Op::Ge, &[21.0])])).unwrap();
@@ -668,6 +755,42 @@ mod tests {
     }
 
     #[test]
+    fn bilinear_blends_when_upsampling() {
+        let c = cat(Mem::new(1, 3, 4, true)); // no flip: rows in index order
+        let spec = |interp, conds| ViewSpec {
+            var: vr("f"),
+            index: vec![0, 0, 0],
+            size: (8, 6),
+            mask: Mask { conds },
+            interp,
+        };
+        let r = view(&c, &spec(Interp::Bilinear, vec![])).unwrap();
+        // Pixel (1, 0): a quarter of the way from column 0 to 1, clamped to row 0.
+        assert!((r.values[1] - 0.25).abs() < 1e-5, "{}", r.values[1]);
+        // Values rise smoothly along each row (f = 10 y + x).
+        assert!(r.values[..8].windows(2).all(|w| w[1] >= w[0]));
+        // Same size as the data: identical to nearest.
+        let same = |interp| {
+            let s = ViewSpec {
+                size: (4, 3),
+                ..spec(interp, vec![])
+            };
+            view(&c, &s).unwrap().values
+        };
+        assert_eq!(same(Interp::Bilinear), same(Interp::Nearest));
+        // A pixel whose nearest cell is masked stays masked.
+        let masked = spec(Interp::Bilinear, vec![cond("g", Op::Ge, &[21.0])]);
+        let n = view(&c, &spec(Interp::Nearest, masked.mask.conds.clone())).unwrap();
+        let b = view(&c, &masked).unwrap();
+        assert!(
+            n.values
+                .iter()
+                .zip(&b.values)
+                .all(|(n, b)| n.is_nan() == b.is_nan())
+        );
+    }
+
+    #[test]
     fn slice_statistics() {
         let c = cat(Mem::new(2, 3, 4, true));
         let spec = |conds| ViewSpec {
@@ -675,6 +798,7 @@ mod tests {
             index: vec![1, 0, 0],
             size: (2, 2),
             mask: Mask { conds },
+            interp: Interp::Nearest,
         };
         // f = 100 + 10 y + x over 3 x 4 cells, whatever the view size.
         let s = stats(&c, &spec(vec![])).unwrap();
@@ -698,6 +822,7 @@ mod tests {
             mask: Mask {
                 conds: vec![cond("y", Op::Gt, &[0.0])],
             },
+            interp: Interp::Nearest,
         };
         let e = view(&c, &spec).unwrap_err().to_string();
         assert!(e.contains("not on the grid"), "{e}");
@@ -710,6 +835,7 @@ mod tests {
             index: vec![0, 0, 0],
             size: (4, 3),
             mask: Mask::default(),
+            interp: Interp::Nearest,
         };
         let c = compare(Mem::new(2, 3, 4, false), Some(Mem::new(3, 3, 4, false)));
         let e = view(&c, &spec).unwrap_err().to_string();
@@ -729,6 +855,7 @@ mod tests {
                 index: vec![1, 0, 0],
                 size: (4, 3),
                 mask: Mask::default(),
+                interp: Interp::Nearest,
             },
         )
         .unwrap();
@@ -746,6 +873,7 @@ mod tests {
                 index: vec![0, 0, 0],
                 size: (4, 3),
                 mask: Mask::default(),
+                interp: Interp::Nearest,
             },
         )
         .unwrap();
@@ -762,6 +890,7 @@ mod tests {
                 index: vec![0, 0, 0],
                 size: (4, 2),
                 mask: Mask::default(),
+                interp: Interp::Nearest,
             },
         )
         .unwrap();
@@ -787,6 +916,7 @@ mod tests {
                     index: vec![1, 0, 0],
                     size,
                     mask: Mask::default(),
+                    interp: Interp::Nearest,
                 };
                 let r = view(&c, &spec).unwrap();
                 for py in 0..r.h {
@@ -812,6 +942,7 @@ mod tests {
             index: vec![0, 0, 0],
             size,
             mask: Mask::default(),
+            interp: Interp::Nearest,
         };
         let up = cat(Mem::new(1, 3, 4, false));
         assert_eq!(cell_at(&up, &spec((4, 3)), (0, 0)), Some((2, 0))); // top is last row
@@ -825,6 +956,7 @@ mod tests {
             index: vec![0],
             size: (4, 3),
             mask: Mask::default(),
+            interp: Interp::Nearest,
         };
         assert_eq!(cell_at(&down, &not_map, (0, 0)), None);
     }
@@ -880,6 +1012,7 @@ mod tests {
                 index: vec![0, 0, 0],
                 size: (4, 3),
                 mask: Mask::default(),
+                interp: Interp::Nearest,
             },
         )
         .unwrap_err();

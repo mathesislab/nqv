@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::mask::{check_overlay, mask_index};
 use crate::view::view;
-use crate::{Catalog, Kind, VarRef, ViewSpec, finite_range};
+use crate::{Catalog, Interp, Kind, VarRef, ViewSpec, finite_range};
 
 /// Which values to draw contours at.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +85,7 @@ pub fn contours(cat: &Catalog, view_spec: &ViewSpec, c: &ContourSpec) -> Result<
         index: mask_index(v, &view_spec.index, cv)?,
         size: (w * f, h * f),
         mask: view_spec.mask.clone(),
+        interp: Interp::Nearest,
     };
     let field = view(cat, &spec)?;
     let Some((lo, hi)) = finite_range(&field.values) else {
