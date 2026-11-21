@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
-use crate::{DimInfo, NetcdfReader, Reader, VarInfo};
+use crate::{DimInfo, JoinedReader, NetcdfReader, Reader, VarInfo, record_dim};
 
 /// A variable in a catalog: index of its source and its name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -31,9 +31,12 @@ pub struct Other {
 
 /// One file, and in a comparison its counterpart (if found and readable).
 pub struct Source {
+    /// The file, or the first of the files joined.
     pub path: PathBuf,
     pub reader: Box<dyn Reader>,
     pub other: Option<Other>,
+    /// Number of files joined into this source (1 for a plain file).
+    pub joined: usize,
 }
 
 pub struct Catalog {
@@ -43,6 +46,8 @@ pub struct Catalog {
     pub show: Show,
     /// Files that were not opened, with the reason.
     pub skipped: Vec<(PathBuf, String)>,
+    /// Warnings worth showing, such as time steps out of order between joined files.
+    pub notes: Vec<String>,
 }
 
 /// A directory entry for file browsing.
@@ -104,7 +109,39 @@ impl Source {
             path: path.to_path_buf(),
             reader: open_reader(path)?,
             other: None,
+            joined: 1,
         })
+    }
+
+    /// `files` joined along `dim` (default: the record dimension of the first file),
+    /// with warnings. A single file is opened as it is.
+    fn joined(files: &[PathBuf], dim: Option<&str>) -> Result<(Self, Vec<String>)> {
+        if let [f] = files {
+            return Ok((Self::single(f)?, vec![]));
+        }
+        let mut readers = vec![];
+        for f in files {
+            let r = open_reader(f).map_err(|e| anyhow::anyhow!("{}: {e:#}", f.display()))?;
+            readers.push((f.clone(), r));
+        }
+        let dim = match dim {
+            Some(d) => d.to_string(),
+            None => match record_dim(readers[0].1.as_ref()) {
+                Some(d) => d,
+                None => bail!(
+                    "{}: no record dimension to join along; name one with --join-dim",
+                    files[0].display()
+                ),
+            },
+        };
+        let (reader, notes) = JoinedReader::new(readers, &dim)?;
+        let source = Self {
+            path: files[0].clone(),
+            joined: reader.len(),
+            reader: Box::new(reader),
+            other: None,
+        };
+        Ok((source, notes))
     }
 }
 
@@ -156,7 +193,60 @@ impl Catalog {
             compare,
             show: Show::Diff,
             skipped,
+            notes: vec![],
         }
+    }
+
+    /// Files joined along `dim` (default: the record dimension) into one source; or, for
+    /// folders, the files of the same name across them joined, each name its own source.
+    /// Joining given files fails on the first that does not fit; in folders such a file
+    /// set falls back to its first file, the others listed in `skipped`.
+    pub fn join(paths: &[PathBuf], dim: Option<&str>) -> Result<Self> {
+        let dirs = paths.iter().filter(|p| p.is_dir()).count();
+        if dirs == 0 {
+            let (source, notes) = Source::joined(paths, dim)?;
+            let mut cat = Self::new(vec![source], false, vec![]);
+            cat.notes = notes;
+            return Ok(cat);
+        }
+        if dirs != paths.len() {
+            bail!("join either files or folders, not both");
+        }
+        let mut groups: Vec<Vec<PathBuf>> = vec![];
+        for d in paths {
+            for f in netcdf_files(d)? {
+                match groups
+                    .iter_mut()
+                    .find(|g| g[0].file_name() == f.file_name())
+                {
+                    Some(g) => g.push(f),
+                    None => groups.push(vec![f]),
+                }
+            }
+        }
+        let (mut sources, mut skipped, mut notes) = (vec![], vec![], vec![]);
+        for g in groups {
+            match Source::joined(&g, dim) {
+                Ok((s, n)) => {
+                    sources.push(s);
+                    notes.extend(n);
+                }
+                Err(e) => {
+                    let why = format!("not joined: {e:#}");
+                    match Source::single(&g[0]) {
+                        Ok(s) => sources.push(s),
+                        Err(e) => skipped.push((g[0].clone(), format!("{e:#}"))),
+                    }
+                    skipped.extend(g[1..].iter().map(|f| (f.clone(), why.clone())));
+                }
+            }
+        }
+        if sources.is_empty() {
+            bail!("no readable NetCDF files in the given folders");
+        }
+        let mut cat = Self::new(sources, false, skipped);
+        cat.notes = notes;
+        Ok(cat)
     }
 
     fn collection(files: &[PathBuf], what: &str) -> Result<Self> {
@@ -228,10 +318,13 @@ impl Catalog {
             .iter()
             .enumerate()
             .any(|(i, o)| i != source && name(&o.path) == name(&s.path));
-        let own = match s.path.parent().map(name) {
+        let mut own = match s.path.parent().map(name) {
             Some(dir) if clash && !dir.is_empty() => format!("{dir}/{}", name(&s.path)),
             _ => name(&s.path),
         };
+        if s.joined > 1 {
+            own = format!("{own} x{}", s.joined);
+        }
         match &s.other {
             Some(o) if name(&o.path) != name(&s.path) => format!("{own} - {}", name(&o.path)),
             _ => own,

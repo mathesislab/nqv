@@ -424,10 +424,12 @@ mod tests {
                 path: PathBuf::from("mem"),
                 reader: Box::new(m),
                 other: None,
+                joined: 1,
             }],
             compare: false,
             show: Show::Diff,
             skipped: vec![],
+            notes: vec![],
         }
     }
 

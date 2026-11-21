@@ -16,6 +16,9 @@ pub fn record_dim(r: &dyn Reader) -> Option<String> {
         .map(|d| d.name.clone())
 }
 
+/// A file being joined, with its path and first and last coordinate value.
+type Placed = (PathBuf, Part, Option<(f32, f32)>);
+
 struct Part {
     reader: Box<dyn Reader>,
     /// Position of this file's first step along the joined dimension.
@@ -40,7 +43,7 @@ impl JoinedReader {
         };
         let template = first.variables().to_vec();
         let first_name = first_path.display().to_string();
-        let mut parts: Vec<(PathBuf, Part, Option<(f32, f32)>)> = vec![];
+        let mut parts: Vec<Placed> = vec![];
         let mut notes = vec![];
         for (path, reader) in files {
             check_same(&template, reader.variables(), dim).map_err(|e| {
