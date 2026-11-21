@@ -4,8 +4,9 @@
 mod bridge;
 mod update;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use nqv_core::ViewSpec;
 use nqv_session::command;
@@ -14,15 +15,43 @@ use std::time::Duration;
 
 use tauri::ipc::Response;
 use tauri::window::Color;
-use tauri::{AppHandle, Manager, State, Theme};
+use tauri::{AppHandle, Manager, State, Theme, WebviewWindow, WindowEvent};
 
 use crate::bridge::{Colormap, OpenRequest, SeriesView, VarItem, ViewState};
 
-/// The open session, and the map last drawn (for clicks, zoom and pan on it).
+/// What a window shows: its session, and the map last drawn (for clicks, zoom and pan
+/// on it).
+#[derive(Default)]
+struct View {
+    session: Option<Session>,
+    last_map: Option<ViewSpec>,
+}
+
+/// The views by window label. Each has its own lock: one window's slow read does not
+/// hold up another.
 #[derive(Default)]
 struct App {
-    session: Mutex<Option<Session>>,
-    last_map: Mutex<Option<ViewSpec>>,
+    views: Mutex<HashMap<String, Arc<Mutex<View>>>>,
+}
+
+impl App {
+    fn view(&self, label: &str) -> Arc<Mutex<View>> {
+        let mut views = self.views.lock().expect("views lock");
+        views.entry(label.to_string()).or_default().clone()
+    }
+
+    /// A new session for the window `label`.
+    fn set(&self, label: &str, s: Session) {
+        let v = self.view(label);
+        let mut v = v.lock().expect("view lock");
+        v.session = Some(s);
+        v.last_map = None;
+    }
+
+    /// The window is gone: its session ends (and a remote connection with it).
+    fn close(&self, label: &str) {
+        self.views.lock().expect("views lock").remove(label);
+    }
 }
 
 type Res<T> = Result<T, String>;
@@ -31,36 +60,40 @@ fn err(e: impl std::fmt::Display) -> String {
     format!("{e:#}")
 }
 
-/// Run `f` on the open session.
-fn with<T>(app: &App, f: impl FnOnce(&mut Session) -> Res<T>) -> Res<T> {
-    let mut guard = app.session.lock().map_err(err)?;
-    match guard.as_mut() {
-        Some(s) => f(s),
-        None => Err("nothing open".into()),
-    }
+/// Run `f` on the window's view.
+fn with_view<T>(app: &App, w: &WebviewWindow, f: impl FnOnce(&mut View) -> Res<T>) -> Res<T> {
+    let v = app.view(w.label());
+    let mut v = v.lock().map_err(err)?;
+    f(&mut v)
 }
 
-/// Run `f` on the session and the map last drawn, then return the new state.
-fn on_map(app: &App, f: impl FnOnce(&mut Session, &ViewSpec)) -> Res<ViewState> {
-    let spec = app.last_map.lock().map_err(err)?.clone();
-    with(app, |s| {
-        if let Some(spec) = &spec {
+/// Run `f` on the window's session.
+fn with<T>(app: &App, w: &WebviewWindow, f: impl FnOnce(&mut Session) -> Res<T>) -> Res<T> {
+    with_view(app, w, |v| match v.session.as_mut() {
+        Some(s) => f(s),
+        None => Err("nothing open".into()),
+    })
+}
+
+/// Run `f` on the window's session and the map last drawn, then return the new state.
+fn on_map(app: &App, w: &WebviewWindow, f: impl FnOnce(&mut Session, &ViewSpec)) -> Res<ViewState> {
+    with_view(app, w, |v| {
+        let s = v.session.as_mut().ok_or("nothing open")?;
+        if let Some(spec) = &v.last_map {
             f(s, spec);
         }
         Ok(bridge::state(s))
     })
 }
 
-/// Show the main window: the page has drawn its first view.
+/// Show the window: its page has drawn its first view.
 #[tauri::command]
-fn ready(app: AppHandle) {
-    show(&app);
+fn ready(w: WebviewWindow) {
+    show(&w);
 }
 
-fn show(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main")
-        && !w.is_visible().unwrap_or(false)
-    {
+fn show(w: &WebviewWindow) {
+    if !w.is_visible().unwrap_or(false) {
         let _ = w.show();
         let _ = w.set_focus();
     }
@@ -82,7 +115,11 @@ fn prepare_window(app: &AppHandle) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(3));
         let h = app.clone();
-        let _ = app.run_on_main_thread(move || show(&h));
+        let _ = app.run_on_main_thread(move || {
+            if let Some(w) = h.get_webview_window("main") {
+                show(&w);
+            }
+        });
     });
 }
 
@@ -104,23 +141,30 @@ fn version() -> String {
 
 /// Open files (locally, or on `host` over ssh) in place of the current ones.
 #[tauri::command]
-async fn open(app: State<'_, App>, req: OpenRequest) -> Res<(ViewState, Option<String>)> {
+async fn open(
+    app: State<'_, App>,
+    w: WebviewWindow,
+    req: OpenRequest,
+) -> Res<(ViewState, Option<String>)> {
     let s = bridge::open(req).map_err(err)?;
     let out = (bridge::state(&s), s.startup_message());
-    *app.session.lock().map_err(err)? = Some(s);
-    *app.last_map.lock().map_err(err)? = None;
+    app.set(w.label(), s);
     Ok(out)
 }
 
 #[tauri::command]
-async fn state(app: State<'_, App>) -> Res<ViewState> {
-    with(&app, |s| Ok(bridge::state(s)))
+async fn state(app: State<'_, App>, w: WebviewWindow) -> Res<ViewState> {
+    with(&app, &w, |s| Ok(bridge::state(s)))
 }
 
 /// A `:` command; returns the new state and a message to show, if any.
 #[tauri::command]
-async fn apply(app: State<'_, App>, line: String) -> Res<(ViewState, Option<String>)> {
-    with(&app, |s| {
+async fn apply(
+    app: State<'_, App>,
+    w: WebviewWindow,
+    line: String,
+) -> Res<(ViewState, Option<String>)> {
+    with(&app, &w, |s| {
         let msg = match s.apply(command::parse(&line)?)? {
             Effect::Message(m) => Some(m),
             Effect::None | Effect::Quit => None,
@@ -130,8 +174,8 @@ async fn apply(app: State<'_, App>, line: String) -> Res<(ViewState, Option<Stri
 }
 
 #[tauri::command]
-async fn step(app: State<'_, App>, k: usize, delta: isize) -> Res<ViewState> {
-    with(&app, |s| {
+async fn step(app: State<'_, App>, w: WebviewWindow, k: usize, delta: isize) -> Res<ViewState> {
+    with(&app, &w, |s| {
         s.step(k, delta);
         Ok(bridge::state(s))
     })
@@ -139,8 +183,13 @@ async fn step(app: State<'_, App>, k: usize, delta: isize) -> Res<ViewState> {
 
 /// Set step `index` (0-based) of dimension `dim` directly (sliders).
 #[tauri::command]
-async fn set_index(app: State<'_, App>, dim: usize, index: usize) -> Res<ViewState> {
-    with(&app, |s| {
+async fn set_index(
+    app: State<'_, App>,
+    w: WebviewWindow,
+    dim: usize,
+    index: usize,
+) -> Res<ViewState> {
+    with(&app, &w, |s| {
         let len = s.var_info().dims.get(dim).map_or(0, |d| d.len);
         if index < len {
             s.index[dim] = index;
@@ -150,16 +199,21 @@ async fn set_index(app: State<'_, App>, dim: usize, index: usize) -> Res<ViewSta
 }
 
 #[tauri::command]
-async fn set_var(app: State<'_, App>, source: usize, name: String) -> Res<ViewState> {
-    with(&app, |s| {
+async fn set_var(
+    app: State<'_, App>,
+    w: WebviewWindow,
+    source: usize,
+    name: String,
+) -> Res<ViewState> {
+    with(&app, &w, |s| {
         s.set_var(nqv_core::VarRef { source, name });
         Ok(bridge::state(s))
     })
 }
 
 #[tauri::command]
-async fn vars(app: State<'_, App>, query: String) -> Res<Vec<VarItem>> {
-    with(&app, |s| Ok(bridge::vars(s, &query)))
+async fn vars(app: State<'_, App>, w: WebviewWindow, query: String) -> Res<Vec<VarItem>> {
+    with(&app, &w, |s| Ok(bridge::vars(s, &query)))
 }
 
 #[tauri::command]
@@ -169,44 +223,53 @@ fn colormaps() -> Vec<Colormap> {
 
 /// The current map at most `w` by `h` pixels, as bytes (see `bridge::map`).
 #[tauri::command]
-async fn map(app: State<'_, App>, w: u32, h: u32) -> Res<Response> {
-    let (bytes, spec) = with(&app, |s| bridge::map(s, w, h).map_err(err))?;
-    *app.last_map.lock().map_err(err)? = Some(spec);
-    Ok(Response::new(bytes))
+async fn map(app: State<'_, App>, window: WebviewWindow, w: u32, h: u32) -> Res<Response> {
+    with_view(&app, &window, |v| {
+        let s = v.session.as_mut().ok_or("nothing open")?;
+        let (bytes, spec) = bridge::map(s, w, h).map_err(err)?;
+        v.last_map = Some(spec);
+        Ok(Response::new(bytes))
+    })
 }
 
 #[tauri::command]
-async fn series(app: State<'_, App>, points: usize) -> Res<Option<SeriesView>> {
-    with(&app, |s| bridge::series(s, points).map_err(err))
+async fn series(app: State<'_, App>, w: WebviewWindow, points: usize) -> Res<Option<SeriesView>> {
+    with(&app, &w, |s| bridge::series(s, points).map_err(err))
 }
 
 /// Click at a pixel of the last map: that cell's value and series.
 #[tauri::command]
-async fn probe(app: State<'_, App>, px: u32, py: u32) -> Res<ViewState> {
-    on_map(&app, |s, spec| bridge::probe(s, spec, px, py))
+async fn probe(app: State<'_, App>, w: WebviewWindow, px: u32, py: u32) -> Res<ViewState> {
+    on_map(&app, &w, |s, spec| bridge::probe(s, spec, px, py))
 }
 
 #[tauri::command]
-async fn close_probe(app: State<'_, App>) -> Res<ViewState> {
-    with(&app, |s| {
+async fn close_probe(app: State<'_, App>, w: WebviewWindow) -> Res<ViewState> {
+    with(&app, &w, |s| {
         s.probe = None;
         Ok(bridge::state(s))
     })
 }
 
 #[tauri::command]
-async fn zoom_at(app: State<'_, App>, px: u32, py: u32, factor: f64) -> Res<ViewState> {
-    on_map(&app, |s, spec| bridge::zoom_at(s, spec, px, py, factor))
+async fn zoom_at(
+    app: State<'_, App>,
+    w: WebviewWindow,
+    px: u32,
+    py: u32,
+    factor: f64,
+) -> Res<ViewState> {
+    on_map(&app, &w, |s, spec| bridge::zoom_at(s, spec, px, py, factor))
 }
 
 #[tauri::command]
-async fn pan(app: State<'_, App>, dx: i64, dy: i64) -> Res<ViewState> {
-    on_map(&app, |s, spec| bridge::pan(s, spec, dx, dy))
+async fn pan(app: State<'_, App>, w: WebviewWindow, dx: i64, dy: i64) -> Res<ViewState> {
+    on_map(&app, &w, |s, spec| bridge::pan(s, spec, dx, dy))
 }
 
 #[tauri::command]
-async fn zoom_reset(app: State<'_, App>) -> Res<ViewState> {
-    with(&app, |s| {
+async fn zoom_reset(app: State<'_, App>, w: WebviewWindow) -> Res<ViewState> {
+    with(&app, &w, |s| {
         s.zoom(None);
         Ok(bridge::state(s))
     })
@@ -215,13 +278,18 @@ async fn zoom_reset(app: State<'_, App>) -> Res<ViewState> {
 /// Folders and NetCDF files where the data is (the host, for remote files), or here
 /// before anything is open.
 #[tauri::command]
-async fn list_dir(app: State<'_, App>, path: PathBuf) -> Res<Vec<nqv_core::DirEntry>> {
-    let guard = app.session.lock().map_err(err)?;
-    let files: &dyn Files = match guard.as_ref() {
-        Some(s) => s.backend.as_ref(),
-        None => &LocalFiles,
-    };
-    files.list_dir(&path).map_err(err)
+async fn list_dir(
+    app: State<'_, App>,
+    w: WebviewWindow,
+    path: PathBuf,
+) -> Res<Vec<nqv_core::DirEntry>> {
+    with_view(&app, &w, |v| {
+        let files: &dyn Files = match v.session.as_ref() {
+            Some(s) => s.backend.as_ref(),
+            None => &LocalFiles,
+        };
+        files.list_dir(&path).map_err(err)
+    })
 }
 
 #[tauri::command]
@@ -235,11 +303,17 @@ fn recipes() -> Vec<(String, String)> {
 }
 
 #[tauri::command]
-async fn save_png(app: State<'_, App>, path: PathBuf, w: u32, h: u32) -> Res<String> {
-    with(&app, |s| s.write_png(&path, (w, h)).map_err(err))
+async fn save_png(
+    app: State<'_, App>,
+    window: WebviewWindow,
+    path: PathBuf,
+    w: u32,
+    h: u32,
+) -> Res<String> {
+    with(&app, &window, |s| s.write_png(&path, (w, h)).map_err(err))
 }
 
-/// Open local files in place of the current ones (files given to the app: its
+/// Open local files in the main window in place of its files (files given to the app: its
 /// arguments, as a desktop file's %F gives them, or macOS's Open With). Paths are made
 /// absolute; a missing one stays as given, for the message.
 fn open_local(app: &App, paths: Vec<PathBuf>) -> anyhow::Result<()> {
@@ -251,8 +325,7 @@ fn open_local(app: &App, paths: Vec<PathBuf>) -> anyhow::Result<()> {
         paths,
         ..OpenRequest::default()
     })?;
-    *app.session.lock().expect("session lock") = Some(s);
-    *app.last_map.lock().expect("map lock") = None;
+    app.set("main", s);
     Ok(())
 }
 
@@ -264,8 +337,10 @@ fn opened(app: &AppHandle, paths: Vec<PathBuf>) {
     let err = open_local(&app.state::<App>(), paths)
         .err()
         .map(|e| format!("{e:#}"));
-    let _ = app.emit("opened", err);
-    show(app);
+    let _ = app.emit_to("main", "opened", err);
+    if let Some(w) = app.get_webview_window("main") {
+        show(&w);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -285,6 +360,11 @@ pub fn run() {
             prepare_window(app.handle());
             update::watch(app.handle());
             Ok(())
+        })
+        .on_window_event(|w, e| {
+            if let WindowEvent::Destroyed = e {
+                w.state::<App>().close(w.label());
+            }
         })
         .invoke_handler(tauri::generate_handler![
             version,
