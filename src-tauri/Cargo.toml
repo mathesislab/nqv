@@ -1,0 +1,20 @@
+[package]
+name = "nqv-desktop"
+version = "0.1.0"
+description = "Quick-look viewer for NetCDF files: desktop app on the nqv session"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# the `_lib` suffix keeps the name of the library apart from the binary's (Windows)
+name = "nqv_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
