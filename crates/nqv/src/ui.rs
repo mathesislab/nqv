@@ -15,6 +15,7 @@ use ratatui_image::Image;
 
 use crate::Output;
 use crate::app::{App, Frame as PlotFrame, MapImage, Plot, filtered_vars};
+use crate::command::{self, RangeMode};
 
 pub struct Areas {
     pub plot: Rect,
@@ -88,7 +89,13 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
         draw_series(f, area, app, fr, along, Some(step_x(app, along)), fg);
     }
     f.render_widget(Paragraph::new(status_line(app, out)), a.status);
-    f.render_widget(Paragraph::new(help_line(app)).dim(), a.help);
+    let help = Paragraph::new(help_line(app));
+    let help = if app.cmdline.is_some() {
+        help
+    } else {
+        help.dim()
+    };
+    f.render_widget(help, a.help);
     if app.picker.is_some() {
         draw_picker(f, app);
     }
@@ -307,7 +314,11 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
             Err(e) => Span::raw(e.clone()).red(),
         });
     }
-    let mode = if app.symmetric { " sym" } else { "" };
+    let mode = match app.range_mode {
+        RangeMode::Auto => "",
+        RangeMode::Symmetric => " sym",
+        RangeMode::Fixed(..) => " fixed",
+    };
     s.push(Span::raw(format!("  {}{mode}  {}", CMAPS[app.cmap].name, out.name())).dim());
     Line::from(s)
 }
@@ -319,6 +330,9 @@ fn dim_at(d: &DimInfo, i: usize, coord: Option<f32>) -> String {
 }
 
 fn help_line(app: &App) -> String {
+    if let Some(line) = &app.cmdline {
+        return format!(":{line}▏   ({})", command::HELP);
+    }
     if let Some(m) = &app.message {
         return m.clone();
     }
@@ -338,7 +352,7 @@ fn help_line(app: &App) -> String {
             "click series  "
         };
     }
-    h += "v var  c cmap  r range  ";
+    h += "v var  c cmap  r range  : cmd  ";
     if app.cat.compare {
         h += "d A-B/A/B  ";
     }

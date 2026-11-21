@@ -7,8 +7,10 @@ Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (
 ## Use
 
 ```bash
-nqv [--diff] [PATH...] [-v VAR] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
+nqv [--diff] [PATH...] [-v VAR] [-t TIME] [--range MIN,MAX] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 ```
+
+`-v` matches like the variable picker; `-t` takes a coordinate value (`1990`, `-21000`) or a 1-based index `@12`, `@-1` (last); `--range` takes `MIN,MAX`, `auto` or `sym`. The same commands work inside the viewer after `:`.
 
 Without a path, `nqv` opens a file browser on the current folder.
 
@@ -28,8 +30,9 @@ In a comparison, variables missing in the second file, or with different dimensi
 | ↑ ↓ | second dimension not shown (e.g. level) |
 | `v` | pick a variable: type to filter (fuzzy: `hice` finds `H_ice`; `ice:` limits to files matching `ice`), ↑↓, Enter, Esc |
 | `c` | next colour map |
-| `r` | toggle range: auto / symmetric around 0 |
-| `d` | comparison: cycle A − B, A, B |
+| `r` | toggle range: auto / symmetric around 0 (also leaves a fixed range) |
+| `:` | command: `v NAME`, `t VALUE`, `t @INDEX`, `range MIN MAX`, `range auto`, `range sym`, `q` |
+| `d` | comparison: cycle A − B, A, B (A and B share one colour range) |
 | `o` | file browser (Enter open, Backspace up, `c` open folder as collection, Esc close) |
 | `O` | open the current file's folder as a collection |
 | `[` `]` | previous / next file (in the folder, or in the collection); the variable stays where it exists |

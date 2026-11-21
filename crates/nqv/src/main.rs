@@ -2,6 +2,7 @@
 
 mod app;
 mod browser;
+mod command;
 mod fuzzy;
 mod ui;
 
@@ -16,6 +17,7 @@ use nqv_core::Catalog;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 use crate::app::App;
+use crate::command::Command;
 
 #[derive(Parser)]
 #[command(version, about = "Quick-look viewer for NetCDF files")]
@@ -28,9 +30,15 @@ paired by name)."
 struct Args {
     /// Files or folders; none opens the file browser
     paths: Vec<PathBuf>,
-    /// Variable to show first
+    /// Variable to show first (matched like the variable picker: fuzzy, file:var)
     #[arg(short, long)]
     var: Option<String>,
+    /// Step to show first: a coordinate value (e.g. 1990, -21000) or @index (@1, @-1)
+    #[arg(short, long, allow_hyphen_values = true)]
+    time: Option<String>,
+    /// Colour range: MIN,MAX (or "MIN MAX"), auto or sym
+    #[arg(long, allow_hyphen_values = true)]
+    range: Option<String>,
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum)]
     gfx: Option<Gfx>,
@@ -87,7 +95,19 @@ fn main() -> Result<()> {
     // Open before taking over the terminal, so errors print plainly.
     let app = match paths.is_empty() {
         true => None,
-        false => Some(App::new(open(&paths, args.diff)?, var.as_deref())?),
+        false => {
+            let mut app = App::new(open(&paths, args.diff)?, var.as_deref())?;
+            let time = args.time.as_deref().map(command::parse_time).transpose();
+            let range = args.range.as_deref().map(command::parse_range).transpose();
+            let cmds = [
+                time.map_err(anyhow::Error::msg)?.map(Command::Time),
+                range.map_err(anyhow::Error::msg)?.map(Command::Range),
+            ];
+            for c in cmds.into_iter().flatten() {
+                app.apply(c).map_err(anyhow::Error::msg)?;
+            }
+            Some(app)
+        }
     };
 
     let mut terminal = ratatui::init();

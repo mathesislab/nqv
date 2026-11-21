@@ -16,6 +16,7 @@ use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
 use crate::browser::{Action, Browser};
+use crate::command::{self, Command, RangeMode};
 use crate::fuzzy;
 use crate::ui;
 
@@ -42,7 +43,7 @@ pub enum MapImage {
 }
 
 /// Everything a cached plot depends on.
-type FrameKey = (VarRef, Vec<usize>, usize, bool, Show, Rect);
+type FrameKey = (VarRef, Vec<usize>, usize, RangeMode, Show, Rect);
 
 pub struct Frame {
     pub key: FrameKey,
@@ -74,8 +75,10 @@ pub struct App {
     /// One index per dimension of `var`; entries at shown dimensions are unused.
     pub index: Vec<usize>,
     pub cmap: usize,
-    pub symmetric: bool,
+    pub range_mode: RangeMode,
     pub picker: Option<VarPicker>,
+    /// Text typed after `:`, while the command line is open.
+    pub cmdline: Option<String>,
     pub frame: Option<Frame>,
     /// Clicked map cell, if any.
     pub probe: Option<Probe>,
@@ -94,9 +97,9 @@ impl App {
     pub fn new(cat: Catalog, var: Option<&str>) -> Result<Self> {
         let vars = cat.data_vars();
         let first = match var {
-            Some(name) => match vars.iter().find(|(_, v)| v.name == name) {
+            Some(q) => match filtered_vars(&cat, q).first() {
                 Some((r, _)) => r.clone(),
-                None => bail!("no variable '{name}'"),
+                None => bail!("no variable matching '{q}'"),
             },
             None => match default_var(&vars) {
                 Some(r) => r.clone(),
@@ -111,7 +114,7 @@ impl App {
                 cat.skipped[0].1
             )),
         };
-        let (cmap, symmetric) = if cat.compare {
+        let (cmap, range_mode) = if cat.compare {
             colour_defaults(cat.show)
         } else {
             colour_defaults(Show::A)
@@ -121,8 +124,9 @@ impl App {
             var: first.clone(),
             index: vec![],
             cmap,
-            symmetric,
+            range_mode,
             picker: None,
+            cmdline: None,
             frame: None,
             probe: None,
             panel: None,
@@ -224,6 +228,26 @@ impl App {
 
     /// Returns false to quit.
     fn handle_key(&mut self, code: KeyCode) -> bool {
+        if let Some(line) = &mut self.cmdline {
+            match code {
+                KeyCode::Esc => self.cmdline = None,
+                KeyCode::Backspace if line.is_empty() => self.cmdline = None,
+                KeyCode::Backspace => {
+                    line.pop();
+                }
+                KeyCode::Char(c) => line.push(c),
+                KeyCode::Enter => {
+                    let line = self.cmdline.take().unwrap_or_default();
+                    match command::parse(&line).and_then(|c| self.apply(c)) {
+                        Ok(true) => return false,
+                        Ok(false) => {}
+                        Err(e) => self.message = Some(e),
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
         if let Some(b) = &mut self.browser {
             match b.handle_key(code) {
                 Action::None => {}
@@ -287,14 +311,20 @@ impl App {
             KeyCode::Char('O') => self.open_paths(&[dir_of(&self.source_path())]),
             KeyCode::Char(']') => self.neighbour(1),
             KeyCode::Char('[') => self.neighbour(-1),
-            KeyCode::Char('r') => self.symmetric = !self.symmetric,
+            KeyCode::Char('r') => {
+                self.range_mode = match self.range_mode {
+                    RangeMode::Auto => RangeMode::Symmetric,
+                    RangeMode::Symmetric | RangeMode::Fixed(..) => RangeMode::Auto,
+                }
+            }
+            KeyCode::Char(':') => self.cmdline = Some(String::new()),
             KeyCode::Char('d') if self.cat.compare => {
                 self.cat.show = match self.cat.show {
                     Show::Diff => Show::A,
                     Show::A => Show::B,
                     Show::B => Show::Diff,
                 };
-                (self.cmap, self.symmetric) = colour_defaults(self.cat.show);
+                (self.cmap, self.range_mode) = colour_defaults(self.cat.show);
                 self.probe = None;
                 self.clear = true;
             }
@@ -350,7 +380,7 @@ impl App {
             new.keep_var(r, self.var_info(), &self.index);
         }
         if !self.cat.compare && !new.cat.compare {
-            (new.cmap, new.symmetric) = (self.cmap, self.symmetric);
+            (new.cmap, new.range_mode) = (self.cmap, self.range_mode);
         }
         new.clear = true;
         *self = new;
@@ -487,7 +517,7 @@ impl App {
             self.var.clone(),
             index.clone(),
             self.cmap,
-            self.symmetric,
+            self.range_mode,
             self.cat.show,
             area,
         );
@@ -509,7 +539,7 @@ impl App {
             self.var.clone(),
             self.index.clone(),
             self.cmap,
-            self.symmetric,
+            self.range_mode,
             self.cat.show,
             area,
         );
@@ -533,11 +563,38 @@ impl App {
     }
 
     fn norm(&self, min: f32, max: f32) -> Norm {
-        if self.symmetric {
-            Norm::symmetric(min, max)
-        } else {
-            Norm { min, max }
+        match self.range_mode {
+            RangeMode::Auto => Norm { min, max },
+            RangeMode::Symmetric => Norm::symmetric(min, max),
+            RangeMode::Fixed(min, max) => Norm { min, max },
         }
+    }
+
+    /// Carry out a command from the `:` line or the command line; true means quit.
+    pub fn apply(&mut self, cmd: Command) -> Result<bool, String> {
+        match cmd {
+            Command::Quit => return Ok(true),
+            Command::Var(q) => match filtered_vars(&self.cat, &q).first() {
+                Some((r, _)) => {
+                    let r = r.clone();
+                    self.set_var(r);
+                }
+                None => return Err(format!("no variable matching '{q}'")),
+            },
+            Command::Time(sel) => {
+                let v = self.var_info();
+                let Some(&d) = v.step_dims().first() else {
+                    return Err(format!("{} has no dimension to step through", v.name));
+                };
+                let dim = &v.dims[d];
+                let coord = self.cat.coord(self.var.source, dim);
+                let i = command::time_index(sel, dim.len, coord.as_deref())
+                    .map_err(|e| format!("t: {}: {e}", dim.name))?;
+                self.index[d] = i;
+            }
+            Command::Range(m) => self.range_mode = m,
+        }
+        Ok(false)
     }
 
     fn map(
@@ -665,12 +722,12 @@ fn dir_of(file: &Path) -> PathBuf {
     }
 }
 
-/// Colour map index and symmetric range for what is shown: differences read best on a
+/// Colour map index and range mode for what is shown: differences read best on a
 /// diverging map around zero, plain fields on viridis with their own range.
-fn colour_defaults(show: Show) -> (usize, bool) {
+fn colour_defaults(show: Show) -> (usize, RangeMode) {
     match show {
-        Show::Diff => (1, true),
-        Show::A | Show::B => (0, false),
+        Show::Diff => (1, RangeMode::Symmetric),
+        Show::A | Show::B => (0, RangeMode::Auto),
     }
 }
 

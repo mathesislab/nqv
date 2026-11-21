@@ -88,7 +88,7 @@ Variables on different grids can still be combined *for display*, because each b
 - Folders are paired file by file, by name. Files only in the second folder are reported as not opened.
 - `Catalog::read` returns A, B or A − B according to `Catalog::show` (`d` cycles them), so maps, series, values and clicked cells work unchanged. Coordinate variables are never differenced.
 - A variable missing from B, or with different dimensions there, gives an error in place of the plot. Comparing different grids or record lengths (common time prefix, regridding through the Raster) is left for later.
-- A − B opens with a diverging colour map and a symmetric range; A and B with viridis and their own range.
+- A − B opens with a diverging colour map and a symmetric range; A and B with viridis and one range covering both, so their colours compare directly.
 
 ## Navigation
 
@@ -135,6 +135,10 @@ fn colorize(w: u32, h: u32, values: &[f32], norm: &Norm, cmap: &Cmap) -> Rgba  /
 ```
 
 Protocol methods mirror this: `list_dir`, `open`, `close`, `tree`, `view`, `range`, `probe`, `series` (time series at a point), `cancel`. Requests are cancellable, so fast scrolling through time drops stale work. Messages are framed like LSP; Raster payloads are binary.
+
+## Commands
+
+Single keys for frequent actions; `:` opens a command line for actions with an argument. Commands share their names and syntax with the command-line flags, so a view can be reached either way: `v NAME` / `-v`, `t VALUE` or `t @INDEX` / `-t`, `range MIN MAX|auto|sym` / `--range`, `q`. Planned next: `mask` (issue #1), `diff PATH`. No modal (vi-style) editing.
 
 ## Big files
 
