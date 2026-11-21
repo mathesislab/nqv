@@ -2,13 +2,13 @@
 
 use anyhow::{Result, bail, ensure};
 
-use crate::{Catalog, DimInfo, Kind, VarInfo};
+use crate::{Catalog, DimInfo, Kind, VarInfo, VarRef};
 
 /// A map view: a variable, one index per dimension, and the output size in pixels.
 /// Indices at the two map dimensions are ignored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewSpec {
-    pub var: String,
+    pub var: VarRef,
     pub index: Vec<usize>,
     pub size: (u32, u32),
 }
@@ -17,7 +17,7 @@ pub struct ViewSpec {
 /// Reads with a stride so that at most about `2 * max_points` points are returned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeriesSpec {
-    pub var: String,
+    pub var: VarRef,
     pub along: usize,
     pub index: Vec<usize>,
     pub max_points: usize,
@@ -111,7 +111,7 @@ struct Sampling {
 }
 
 impl Sampling {
-    fn new(cat: &Catalog, var: &VarInfo, size: (u32, u32)) -> Result<Self> {
+    fn new(cat: &Catalog, r: &VarRef, var: &VarInfo, size: (u32, u32)) -> Result<Self> {
         let Kind::Map { y, x } = var.kind() else {
             bail!("{} is not a map", var.name);
         };
@@ -131,7 +131,7 @@ impl Sampling {
             sx,
             my: ny.div_ceil(sy),
             mx: nx.div_ceil(sx),
-            flip: !y_decreasing(cat, &var.dims[y]),
+            flip: !y_decreasing(cat, r.source, &var.dims[y]),
         })
     }
 
@@ -151,7 +151,7 @@ impl Sampling {
 /// resample to exactly `spec.size` by nearest neighbour.
 pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
     let var = cat.var(&spec.var)?;
-    let s = Sampling::new(cat, var, spec.size)?;
+    let s = Sampling::new(cat, &spec.var, var, spec.size)?;
     let (y, x, my, mx) = (s.y, s.x, s.my, s.mx);
     check_index(var, &spec.index, &[y, x])?;
 
@@ -160,7 +160,7 @@ pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
     let mut stride = vec![1; var.dims.len()];
     (start[y], count[y], stride[y]) = (0, my, s.sy);
     (start[x], count[x], stride[x]) = (0, mx, s.sx);
-    let data = cat.reader.read_slice(&var.name, &start, &count, &stride)?;
+    let data = cat.read(&spec.var, &start, &count, &stride)?;
     ensure!(
         data.len() == my * mx,
         "{}: read {} values, expected {}",
@@ -195,7 +195,7 @@ pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
 /// `spec.size` or the variable is not a map.
 pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize, usize)> {
     let var = cat.var(&spec.var).ok()?;
-    let s = Sampling::new(cat, var, spec.size).ok()?;
+    let s = Sampling::new(cat, &spec.var, var, spec.size).ok()?;
     let (c, r) = (px.0 as usize, px.1 as usize);
     if c >= s.w || r >= s.h {
         return None;
@@ -245,20 +245,26 @@ pub fn series(cat: &Catalog, spec: &SeriesSpec) -> Result<Series> {
     let mut count = vec![1; var.dims.len()];
     let mut stride = vec![1; var.dims.len()];
     (start[spec.along], count[spec.along], stride[spec.along]) = (0, n, st);
-    let y = cat.reader.read_slice(&var.name, &start, &count, &stride)?;
-    let x = match cat.coord_var(dim) {
-        Some(_) => cat.reader.read_slice(&dim.name, &[0], &[n], &[st])?,
+    let y = cat.read(&spec.var, &start, &count, &stride)?;
+    let x = match cat.coord_var(spec.var.source, dim) {
+        Some(_) => {
+            let c = VarRef {
+                source: spec.var.source,
+                name: dim.name.clone(),
+            };
+            cat.read(&c, &[0], &[n], &[st])?
+        }
         None => (0..n).map(|i| (i * st) as f32).collect(),
     };
     Ok(Series { x, y })
 }
 
 /// Single value of a variable at `index`.
-pub fn value(cat: &Catalog, var: &str, index: &[usize]) -> Result<f32> {
+pub fn value(cat: &Catalog, var: &VarRef, index: &[usize]) -> Result<f32> {
     let v = cat.var(var)?;
     check_index(v, index, &[])?;
     let one = vec![1; index.len()];
-    Ok(cat.reader.read_slice(var, index, &one, &one)?[0])
+    Ok(cat.read(var, index, &one, &one)?[0])
 }
 
 /// Source index for output index `i` of `n` when sampling `m` source points.
@@ -268,11 +274,15 @@ fn nearest(i: usize, n: usize, m: usize) -> usize {
 
 /// Whether the y coordinate decreases (first row is the top). Without a
 /// coordinate variable, index 0 is taken as the bottom row, like ncview.
-fn y_decreasing(cat: &Catalog, ydim: &DimInfo) -> bool {
-    if cat.coord_var(ydim).is_none() || ydim.len < 2 {
+fn y_decreasing(cat: &Catalog, source: usize, ydim: &DimInfo) -> bool {
+    if cat.coord_var(source, ydim).is_none() || ydim.len < 2 {
         return false;
     }
-    match cat.reader.read_slice(&ydim.name, &[0], &[2], &[1]) {
+    let r = VarRef {
+        source,
+        name: ydim.name.clone(),
+    };
+    match cat.read(&r, &[0], &[2], &[1]) {
         Ok(c) => c[1] < c[0],
         Err(_) => false,
     }
@@ -281,7 +291,7 @@ fn y_decreasing(cat: &Catalog, ydim: &DimInfo) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Kind, Reader, VarInfo};
+    use crate::{Kind, Other, Reader, Show, Source, VarInfo};
     use std::path::PathBuf;
 
     /// In-memory reader: variable "f"(t, y, x) with f = 100 t + 10 y + x, and coordinate y.
@@ -291,6 +301,8 @@ mod tests {
         ny: usize,
         nx: usize,
         y_desc: bool,
+        /// Added to every value of "f".
+        offset: f32,
     }
 
     impl Mem {
@@ -314,6 +326,7 @@ mod tests {
                 ny,
                 nx,
                 y_desc,
+                offset: 0.0,
             }
         }
     }
@@ -350,7 +363,9 @@ mod tests {
             for t in 0..c[0] {
                 for y in 0..c[1] {
                     for x in 0..c[2] {
-                        out.push((100 * idx(0, t) + 10 * idx(1, y) + idx(2, x)) as f32);
+                        out.push(
+                            (100 * idx(0, t) + 10 * idx(1, y) + idx(2, x)) as f32 + self.offset,
+                        );
                     }
                 }
             }
@@ -358,11 +373,69 @@ mod tests {
         }
     }
 
+    fn vr(name: &str) -> VarRef {
+        VarRef {
+            source: 0,
+            name: name.into(),
+        }
+    }
+
     fn cat(m: Mem) -> Catalog {
         Catalog {
-            path: PathBuf::from("mem"),
-            reader: Box::new(m),
+            sources: vec![Source {
+                path: PathBuf::from("mem"),
+                reader: Box::new(m),
+                other: None,
+            }],
+            compare: false,
+            show: Show::Diff,
+            skipped: vec![],
         }
+    }
+
+    /// Comparison of `a` with `b` (no counterpart when `b` is None).
+    fn compare(a: Mem, b: Option<Mem>) -> Catalog {
+        let mut c = cat(a);
+        c.compare = true;
+        c.sources[0].other = b.map(|b| Other {
+            path: PathBuf::from("mem-b"),
+            reader: Box::new(b),
+        });
+        c
+    }
+
+    #[test]
+    fn compare_shows_difference_a_and_b() {
+        let mut b = Mem::new(2, 3, 4, false);
+        b.offset = 5.0;
+        let mut c = compare(Mem::new(2, 3, 4, false), Some(b));
+        let spec = ViewSpec {
+            var: vr("f"),
+            index: vec![1, 0, 0],
+            size: (4, 3),
+        };
+        assert!(view(&c, &spec).unwrap().values.iter().all(|&v| v == -5.0));
+        // Coordinates are not differenced: increasing y still puts y = 2 on top.
+        c.show = Show::A;
+        assert_eq!(view(&c, &spec).unwrap().values[0], 120.0);
+        c.show = Show::B;
+        assert_eq!(view(&c, &spec).unwrap().values[0], 125.0);
+        assert_eq!(value(&c, &vr("f"), &[1, 2, 3]).unwrap(), 128.0);
+    }
+
+    #[test]
+    fn compare_errors_on_mismatch() {
+        let spec = ViewSpec {
+            var: vr("f"),
+            index: vec![0, 0, 0],
+            size: (4, 3),
+        };
+        let c = compare(Mem::new(2, 3, 4, false), Some(Mem::new(3, 3, 4, false)));
+        let e = view(&c, &spec).unwrap_err().to_string();
+        assert!(e.contains("differs in dimensions"), "{e}");
+        let c = compare(Mem::new(2, 3, 4, false), None);
+        let e = view(&c, &spec).unwrap_err().to_string();
+        assert!(e.contains("no readable counterpart"), "{e}");
     }
 
     #[test]
@@ -371,7 +444,7 @@ mod tests {
         let r = view(
             &c,
             &ViewSpec {
-                var: "f".into(),
+                var: vr("f"),
                 index: vec![1, 0, 0],
                 size: (4, 3),
             },
@@ -387,7 +460,7 @@ mod tests {
         let r = view(
             &c,
             &ViewSpec {
-                var: "f".into(),
+                var: vr("f"),
                 index: vec![0, 0, 0],
                 size: (4, 3),
             },
@@ -402,7 +475,7 @@ mod tests {
         let r = view(
             &c,
             &ViewSpec {
-                var: "f".into(),
+                var: vr("f"),
                 index: vec![0, 0, 0],
                 size: (4, 2),
             },
@@ -426,7 +499,7 @@ mod tests {
             for (ny, nx, size) in cases {
                 let c = cat(Mem::new(2, ny, nx, y_desc));
                 let spec = ViewSpec {
-                    var: "f".into(),
+                    var: vr("f"),
                     index: vec![1, 0, 0],
                     size,
                 };
@@ -450,7 +523,7 @@ mod tests {
     #[test]
     fn cell_at_corners_and_outside() {
         let spec = |size| ViewSpec {
-            var: "f".into(),
+            var: vr("f"),
             index: vec![0, 0, 0],
             size,
         };
@@ -462,7 +535,7 @@ mod tests {
         let down = cat(Mem::new(1, 3, 4, true));
         assert_eq!(cell_at(&down, &spec((4, 3)), (0, 0)), Some((0, 0)));
         let not_map = ViewSpec {
-            var: "y".into(),
+            var: vr("y"),
             index: vec![0],
             size: (4, 3),
         };
@@ -483,7 +556,7 @@ mod tests {
     fn series_along_time_at_a_point() {
         let c = cat(Mem::new(5, 3, 4, false));
         let spec = SeriesSpec {
-            var: "f".into(),
+            var: vr("f"),
             along: 0,
             index: vec![0, 2, 3],
             max_points: 100,
@@ -515,7 +588,7 @@ mod tests {
         let e = view(
             &c,
             &ViewSpec {
-                var: "f".into(),
+                var: vr("f"),
                 index: vec![0, 0, 0],
                 size: (4, 3),
             },

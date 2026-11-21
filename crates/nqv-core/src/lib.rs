@@ -1,12 +1,14 @@
 //! nqv-core: data access and view extraction. No display code.
 
+mod catalog;
 mod netcdf;
 mod view;
 
-use std::path::{Path, PathBuf};
+use anyhow::Result;
 
-use anyhow::{Result, bail};
-
+pub use crate::catalog::{
+    Catalog, DirEntry, Other, Show, Source, VarRef, is_netcdf, list_dir, netcdf_files,
+};
 pub use crate::netcdf::NetcdfReader;
 pub use crate::view::{
     RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, cell_at, finite_range, fit_size, range,
@@ -91,52 +93,4 @@ pub trait Reader: Send + Sync {
         count: &[usize],
         stride: &[usize],
     ) -> Result<Vec<f32>>;
-}
-
-/// An opened source with its variables. Single file for now; collections later.
-pub struct Catalog {
-    pub path: PathBuf,
-    pub reader: Box<dyn Reader>,
-}
-
-impl Catalog {
-    pub fn open(path: &Path) -> Result<Self> {
-        let reader = NetcdfReader::open(path)?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            reader: Box::new(reader),
-        })
-    }
-
-    pub fn var(&self, name: &str) -> Result<&VarInfo> {
-        match self.reader.variables().iter().find(|v| v.name == name) {
-            Some(v) => Ok(v),
-            None => bail!("no variable '{name}' in {}", self.path.display()),
-        }
-    }
-
-    /// Variables to offer for display: all but coordinate variables.
-    pub fn data_vars(&self) -> Vec<&VarInfo> {
-        self.reader
-            .variables()
-            .iter()
-            .filter(|v| !v.is_coordinate())
-            .collect()
-    }
-
-    /// The coordinate variable for `dim`, if the source has one.
-    pub fn coord_var(&self, dim: &DimInfo) -> Option<&VarInfo> {
-        self.reader
-            .variables()
-            .iter()
-            .find(|v| v.name == dim.name && v.is_coordinate())
-    }
-
-    /// Values of the coordinate variable for `dim`, if the source has one.
-    pub fn coord(&self, dim: &DimInfo) -> Option<Vec<f32>> {
-        self.coord_var(dim)?;
-        self.reader
-            .read_slice(&dim.name, &[0], &[dim.len], &[1])
-            .ok()
-    }
 }

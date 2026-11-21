@@ -1,36 +1,37 @@
-//! Open a file and time a view of each variable: `probe FILE [W H]`.
+//! Open paths as `nqv` does and time a view of each variable: `probe PATH...`.
+//! Two files or two folders are compared (first minus second). Output size from
+//! `PROBE_SIZE=WxH` (default 400x200).
 use std::time::Instant;
 
 use nqv_core::{Catalog, Kind, SeriesSpec, ViewSpec, finite_range, series, value, view};
 
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let path = std::path::PathBuf::from(&args[1]);
-    let w: u32 = args.get(2).map_or(Ok(400), |s| s.parse())?;
-    let h: u32 = args.get(3).map_or(Ok(200), |s| s.parse())?;
+    let paths: Vec<std::path::PathBuf> = std::env::args().skip(1).map(Into::into).collect();
+    let size = std::env::var("PROBE_SIZE").unwrap_or_else(|_| "400x200".into());
+    let (w, h) = size.split_once('x').expect("PROBE_SIZE=WxH");
+    let size: (u32, u32) = (w.parse()?, h.parse()?);
     let t0 = Instant::now();
-    let cat = Catalog::open(&path)?;
-    println!("open: {:?}", t0.elapsed());
-    for v in cat.data_vars() {
-        let index = v
-            .dims
-            .iter()
-            .map(|d| d.len.saturating_sub(1))
-            .collect::<Vec<_>>();
+    let cat = Catalog::open(&paths)?;
+    println!("open: {:?}, compare: {}", t0.elapsed(), cat.compare);
+    for (p, why) in &cat.skipped {
+        println!("skipped {}: {why}", p.display());
+    }
+    for (r, v) in cat.data_vars() {
+        let index: Vec<usize> = v.dims.iter().map(|d| d.len.saturating_sub(1)).collect();
         let t = Instant::now();
         let res = match v.kind() {
-            Kind::Map { .. } => view(
-                &cat,
-                &ViewSpec {
-                    var: v.name.clone(),
+            Kind::Map { .. } => {
+                let spec = ViewSpec {
+                    var: r.clone(),
                     index,
-                    size: (w, h),
-                },
-            )
-            .map(|r| format!("map {}x{} {:?}", r.w, r.h, finite_range(&r.values))),
+                    size,
+                };
+                view(&cat, &spec)
+                    .map(|r| format!("map {}x{} {:?}", r.w, r.h, finite_range(&r.values)))
+            }
             Kind::Series { along } => {
                 let spec = SeriesSpec {
-                    var: v.name.clone(),
+                    var: r.clone(),
                     along,
                     index,
                     max_points: 2000,
@@ -38,12 +39,13 @@ fn main() -> anyhow::Result<()> {
                 series(&cat, &spec)
                     .map(|s| format!("series {} {:?}", s.y.len(), finite_range(&s.y)))
             }
-            Kind::Scalar => value(&cat, &v.name, &index).map(|x| format!("scalar {x}")),
+            Kind::Scalar => value(&cat, &r, &index).map(|x| format!("scalar {x}")),
         };
         let dims: Vec<usize> = v.dims.iter().map(|d| d.len).collect();
+        let name = format!("{}:{}", cat.label(r.source), v.name);
         match res {
-            Ok(s) => println!("{:<24} {:?} {:>9.2?}  {s}", v.name, dims, t.elapsed()),
-            Err(e) => println!("{:<24} {:?} error: {e:#}", v.name, dims),
+            Ok(s) => println!("{name:<40} {dims:?} {:>9.2?}  {s}", t.elapsed()),
+            Err(e) => println!("{name:<40} {dims:?} error: {e:#}"),
         }
     }
     Ok(())
