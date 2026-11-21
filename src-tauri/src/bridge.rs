@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use nqv_core::{Kind, Region, Show, ViewSpec, finite_range};
+use nqv_core::{Kind, Show, ViewSpec, finite_range};
 use nqv_proto::{Connection, Prompt, Remote};
 use nqv_render::{CMAPS, MISSING, extends};
 use nqv_session::command::RangeMode;
@@ -68,6 +68,8 @@ pub struct DimView {
 pub struct ProbeView {
     pub cell: (usize, usize),
     pub coords: (Option<f32>, Option<f32>),
+    /// Longitude and latitude, as text, where the grid's geography is known.
+    pub lonlat: Option<String>,
     pub value: Option<f32>,
     pub error: Option<String>,
 }
@@ -97,7 +99,14 @@ pub struct ViewState {
     pub mask_error: Option<String>,
     pub contour: Option<String>,
     pub contour_error: Option<String>,
-    pub zoom: Option<Region>,
+    /// Not the whole map: zoomed in on its grid, or in a projection (where the first
+    /// view is the whole map).
+    pub zoomed: bool,
+    /// The projection maps are shown in (`:proj` syntax); None: on their own grid.
+    pub proj: Option<String>,
+    /// Longitude and latitude of the map's middle cell, where its geography is known
+    /// (so it can be projected; a globe is centred there).
+    pub centre: Option<(f64, f64)>,
     pub probe: Option<ProbeView>,
     pub command_line: String,
 }
@@ -167,10 +176,20 @@ pub fn state(s: &Session) -> ViewState {
         mask_error: o.mask_error,
         contour: s.contour.as_ref().map(|c| c.text()),
         contour_error: o.contour_error,
-        zoom: s.region,
+        zoomed: s.region.is_some() || s.target.is_some(),
+        proj: s.target.as_ref().map(|t| t.proj.text()),
+        centre: match kind {
+            Kind::Map { y, x } => s
+                .backend
+                .lonlat(&s.var, (v.dims[y].len / 2, v.dims[x].len / 2)),
+            _ => None,
+        },
         probe: s.probe_info().map(|p| ProbeView {
             cell: p.cell,
             coords: p.coords,
+            lonlat: p
+                .lonlat
+                .map(|(lon, lat)| nqv_session::format::lonlat(lon, lat)),
             value: p.value.as_ref().ok().copied(),
             error: p.value.err(),
         }),
@@ -253,6 +272,8 @@ pub struct MapHeader {
     pub ticks: Vec<(f32, String)>,
     /// Contour segments in map pixels, x0 y0 x1 y1 each; and their labels.
     pub contours: Vec<f32>,
+    /// Meridians and parallels of a projected map, as `contours`.
+    pub grid: Vec<f32>,
     pub labels: Vec<(f32, f32, String)>,
     pub stats: Option<StatsView>,
 }
@@ -299,6 +320,14 @@ pub fn map(s: &Session, w: u32, h: u32) -> Result<(Vec<u8>, ViewSpec)> {
             .flat_map(|l| l.segments.iter().flat_map(|[a, b]| [a.0, a.1, b.0, b.1]))
             .collect(),
         labels: nqv_session::png::contour_labels(&m.contours, m.raster.w, m.raster.h),
+        grid: s
+            .graticule((m.raster.w, m.raster.h))
+            .map(|g| g.meridians.into_iter().chain(g.parallels))
+            .into_iter()
+            .flatten()
+            .flat_map(|l| l.segments)
+            .flat_map(|[a, b]| [a.0, a.1, b.0, b.1])
+            .collect(),
         stats: m.stats.map(|st| StatsView {
             min: st.min,
             max: st.max,

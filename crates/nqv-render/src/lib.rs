@@ -374,11 +374,11 @@ pub fn draw_lines(img: &mut Rgba, segments: &[Segment]) {
     }
 }
 
-/// Halfway from `c` towards its contrasting colour: for lines that should show but not
-/// stand out, such as meridians and parallels.
+/// A third of the way from `c` towards its contrasting colour: for lines that should
+/// show but not stand out, such as meridians and parallels.
 pub fn faint(c: [u8; 3]) -> [u8; 3] {
     let k = contrast(c);
-    std::array::from_fn(|i| ((c[i] as u16 + k[i] as u16) / 2) as u8)
+    std::array::from_fn(|i| ((2 * c[i] as u16 + k[i] as u16) / 3) as u8)
 }
 
 /// Draw `segments` into `img` faintly (`faint` of the map under them).

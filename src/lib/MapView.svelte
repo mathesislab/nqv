@@ -93,6 +93,18 @@
     overlay.width = w;
     overlay.height = h;
     const ctx = overlay.getContext("2d")!;
+    // Meridians and parallels, faint, under the contours.
+    const g = map.header.grid;
+    if (g.length) {
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < g.length; i += 4) {
+        ctx.moveTo(g[i], g[i + 1]);
+        ctx.lineTo(g[i + 2], g[i + 3]);
+      }
+      ctx.stroke();
+    }
     const c = map.header.contours;
     // White lines with a dark edge read on any colours.
     for (const [style, width] of [["rgba(0,0,0,0.7)", 2.5], ["white", 1]] as const) {
@@ -149,7 +161,7 @@
     const dy = (e.clientY - d.y) * scale;
     try {
       if (Math.hypot(dx, dy) > 3 * scale) {
-        if (view.zoom) onstate(await api.pan(Math.round(dx), Math.round(dy)));
+        if (view.zoomed) onstate(await api.pan(Math.round(dx), Math.round(dy)));
       } else {
         const p = pixel(e);
         if (p) onstate(await api.probe(p[0], p[1]));

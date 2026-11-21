@@ -161,8 +161,29 @@
     if (!view || !p) return "";
     const [y, x] = view.dims.filter((d) => d.role === "y" || d.role === "x");
     const at = (d: typeof y, i: number, c: number | null) => `${d.name}=${i + 1}${c !== null ? ` (${fmt(c)})` : ""}`;
-    return `@ ${at(y, p.cell[0], p.coords[0])} ${at(x, p.cell[1], p.coords[1])} = ${p.value !== null ? fmt(p.value) : p.error}`;
+    const ll = p.lonlat ? ` (${p.lonlat})` : "";
+    return `@ ${at(y, p.cell[0], p.coords[0])} ${at(x, p.cell[1], p.coords[1])}${ll} = ${p.value !== null ? fmt(p.value) : p.error}`;
   });
+
+  // Projections offered: on its own grid, or one of these (a globe centred on the map).
+  const projections: [string, string][] = [
+    ["native", "own grid"],
+    ["latlon", "lat-lon"],
+    ["stere north", "polar N"],
+    ["stere south", "polar S"],
+    ["laea north", "equal-area N"],
+    ["laea south", "equal-area S"],
+    ["globe", "globe"],
+  ];
+  const projChoice = $derived.by(() => {
+    const p = view?.proj;
+    return !p ? "native" : p.startsWith("ortho") ? "globe" : p;
+  });
+  function setProj(choice: string) {
+    const c = view?.centre;
+    const spec = choice === "globe" ? (c ? `ortho ${c[0].toFixed(1)},${c[1].toFixed(1)}` : "ortho 0,60") : choice;
+    run(`proj ${spec}`);
+  }
 </script>
 
 <svelte:window onkeydown={key} />
@@ -193,7 +214,16 @@
           {/each}
         </div>
       {/if}
-      {#if view.zoom}<button onclick={() => act(() => api.zoomReset())} title="Whole map (z)">whole map</button>{/if}
+      {#if view.kind === "map" && (view.centre || view.proj)}
+        <label title="Projection">
+          projection
+          <select value={projChoice} onchange={(e) => setProj((e.currentTarget as HTMLSelectElement).value)}>
+            {#each projections as [spec, label]}<option value={spec}>{label}</option>{/each}
+            {#if !projections.some(([s]) => s === projChoice)}<option value={projChoice}>{projChoice}</option>{/if}
+          </select>
+        </label>
+      {/if}
+      {#if view.zoomed}<button onclick={() => act(() => api.zoomReset())} title="Whole map (z)">whole map</button>{/if}
       <span class="spacer"></span>
       <button onclick={copyCommand} title="Copy the command line for this view (p)">copy command</button>
       <button onclick={savePng}>Save PNG…</button>

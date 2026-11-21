@@ -18,6 +18,7 @@ export type DimView = {
 export type ProbeView = {
   cell: [number, number];
   coords: [number | null, number | null];
+  lonlat: string | null;
   value: number | null;
   error: string | null;
 };
@@ -42,7 +43,9 @@ export type ViewState = {
   mask_error: string | null;
   contour: string | null;
   contour_error: string | null;
-  zoom: Region | null;
+  zoomed: boolean;
+  proj: string | null;
+  centre: [number, number] | null;
   probe: ProbeView | null;
   command_line: string;
 };
@@ -83,6 +86,7 @@ export type MapHeader = {
   extend: [boolean, boolean];
   ticks: [number, string][];
   contours: number[];
+  grid: number[];
   labels: [number, number, string][];
   stats: StatsView | null;
 };
