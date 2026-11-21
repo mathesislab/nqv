@@ -12,12 +12,12 @@ use anyhow::{Result, bail};
 use clap::{Parser, ValueEnum};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
-use nqv_core::Catalog;
 use ratatui_image::picker::{Picker, ProtocolType};
 
-use crate::app::{App, Origin};
+use crate::app::App;
 use nqv_session::command::{self, Command};
 use nqv_session::recipe;
+use nqv_session::{OpenMode, Session};
 
 #[derive(Parser)]
 #[command(
@@ -230,14 +230,13 @@ fn main() -> Result<()> {
     let app = match args.paths.is_empty() {
         true => None,
         false => {
-            let mut app = App::new(open(&args.paths, &args)?, None)?;
-            app.origin = Origin {
-                paths: args.paths.clone(),
+            let mode = OpenMode {
                 diff: args.diff,
                 join: args.join,
                 join_dim: args.join_dim.clone(),
                 vs: args.vs.clone(),
             };
+            let mut app = App::new(Session::open(&args.paths, &mode)?);
             for c in commands(&args).map_err(anyhow::Error::msg)? {
                 app.apply(c).map_err(anyhow::Error::msg)?;
             }
@@ -264,7 +263,7 @@ fn main() -> Result<()> {
         let app = match app {
             Some(app) => Some(app),
             None => App::pick(&mut terminal, &std::env::current_dir()?)?.map(|mut a| {
-                a.cvd |= args.cvd;
+                a.s.cvd |= args.cvd;
                 a
             }),
         };
@@ -328,24 +327,6 @@ fn parse_size(s: &str) -> Result<(u32, u32)> {
     match parsed {
         Some((w, h)) if w >= 16 && h >= 16 => Ok((w, h)),
         _ => bail!("--size: expected WIDTHxHEIGHT (at least 16x16), got '{s}'"),
-    }
-}
-
-fn open(paths: &[PathBuf], args: &Args) -> Result<Catalog> {
-    if let Some(p) = paths.iter().chain(&args.vs).find(|p| !p.exists()) {
-        bail!("{}: no such file or folder", p.display());
-    }
-    let side = |p: &[PathBuf]| match args.join {
-        true => Catalog::join(p, args.join_dim.as_deref()),
-        false => Catalog::open(p),
-    };
-    match (args.diff, args.vs.is_empty(), paths) {
-        (true, false, _) => bail!("use --diff A B or A... --vs B..., not both"),
-        (true, true, _) if args.join => bail!("to compare joined files use -j A... --vs B..."),
-        (true, true, [a, b]) => Catalog::compare(a, b),
-        (true, true, _) => bail!("--diff needs two files or two folders"),
-        (false, false, _) => Catalog::pair(side(paths)?, side(&args.vs)?),
-        (false, true, _) => side(paths),
     }
 }
 

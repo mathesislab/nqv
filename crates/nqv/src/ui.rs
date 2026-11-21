@@ -14,7 +14,7 @@ use ratatui::widgets::{
 use ratatui_image::Image;
 
 use crate::Output;
-use crate::app::{App, Frame as PlotFrame, MapImage, Plot, filtered_vars};
+use crate::app::{App, Frame as PlotFrame, MapImage, Plot};
 use nqv_session::command::{self, RangeMode};
 
 pub struct Areas {
@@ -57,8 +57,8 @@ pub fn layout(area: Rect, panel: bool) -> Areas {
 
 pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
     let truecolor = !matches!(out, Output::Blocks { truecolor: false });
-    let v = app.var_info();
-    let cmap = &CMAPS[app.cmap];
+    let v = app.s.var_info();
+    let cmap = &CMAPS[app.s.cmap];
     let fg = color(cmap.at(0.6), truecolor);
     if let Some(fr) = &app.frame {
         match &fr.plot {
@@ -95,7 +95,7 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
             draw_bar(f, a.bar, n, cmap, ext, truecolor);
         }
     }
-    if let (Some(area), Some(fr), Some(along)) = (a.panel, &app.panel, app.series_dim()) {
+    if let (Some(area), Some(fr), Some(along)) = (a.panel, &app.panel, app.s.series_dim()) {
         draw_series(f, area, app, fr, along, Some(step_x(app, along)), fg);
     }
     f.render_widget(Paragraph::new(status_line(app, out)), a.status);
@@ -208,11 +208,12 @@ fn draw_series(
 ) {
     match (&fr.plot, &fr.norm) {
         (Plot::Line(s), Some(n)) => {
-            let v = app.var_info();
+            let v = app.s.var_info();
             let dim = &v.dims[along];
             let xtitle = match app
-                .cat
-                .coord_var(app.var.source, dim)
+                .s
+                .info()
+                .coord_var(app.s.var.source, dim)
                 .and_then(|c| c.units.as_deref())
             {
                 Some(u) => format!("{} [{u}]", dim.name),
@@ -228,8 +229,11 @@ fn draw_series(
 
 /// Coordinate value of the current step along dimension `along`, or its index.
 fn step_x(app: &App, along: usize) -> f64 {
-    let i = app.index[along];
-    let c = app.cat.coord(app.var.source, &app.var_info().dims[along]);
+    let i = app.s.index[along];
+    let c = app
+        .s
+        .backend
+        .coord(app.s.var.source, &app.s.var_info().dims[along].name);
     c.and_then(|c| c.get(i).copied())
         .map_or(i as f64, |c| c as f64)
 }
@@ -464,11 +468,11 @@ fn draw_bar(f: &mut Frame, area: Rect, n: &Norm, cmap: &Cmap, ext: (bool, bool),
 }
 
 fn status_line(app: &App, out: &Output) -> Line<'static> {
-    let v = app.var_info();
-    let file = app.cat.label(app.var.source);
+    let v = app.s.var_info();
+    let file = app.s.info().label(app.s.var.source);
     let mut s = vec![];
-    if app.cat.compare {
-        let what = match app.cat.show {
+    if app.s.info().compare {
+        let what = match app.s.info().show {
             Show::Diff => "A-B",
             Show::A => "A",
             Show::B => "B",
@@ -483,11 +487,8 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         s.push(Span::raw(format!(" [{u}]")));
     }
     for k in v.step_dims() {
-        let (d, i) = (&v.dims[k], app.index[k]);
-        let c = app
-            .cat
-            .coord(app.var.source, d)
-            .and_then(|c| c.get(i).copied());
+        let (d, i) = (&v.dims[k], app.s.index[k]);
+        let c = app.s.coord_at(k, i);
         s.push(Span::raw(format!("  {}", dim_at(d, i, c))));
     }
     if let Some(fr) = &app.frame
@@ -511,35 +512,35 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
             Err(e) => Span::raw(e.clone()).red(),
         });
     }
-    if !app.mask.is_empty() {
-        let text: Vec<String> = app.mask.iter().map(|c| c.text()).collect();
+    if !app.s.mask.is_empty() {
+        let text: Vec<String> = app.s.mask.iter().map(|c| c.text()).collect();
         let text = format!("  mask: {}", text.join(" and "));
-        s.push(match &app.mask_error {
+        s.push(match &app.overlays.mask_error {
             None => Span::raw(text).italic(),
             Some(e) => Span::raw(format!("{text} (not applied: {e})")).red(),
         });
     }
-    if let Some(c) = &app.contour {
+    if let Some(c) = &app.s.contour {
         let text = format!("  contour: {}", c.text());
-        s.push(match &app.contour_error {
+        s.push(match &app.overlays.contour_error {
             None => Span::raw(text).italic(),
             Some(e) => Span::raw(format!("{text} (not drawn: {e})")).red(),
         });
     }
-    let mode = match app.range_mode {
+    let mode = match app.s.range_mode {
         RangeMode::Auto => "",
         RangeMode::Symmetric => " sym",
         RangeMode::Fixed(..) => " fixed",
         RangeMode::Log(None) => " log",
         RangeMode::Log(Some(_)) => " log fixed",
     };
-    let c = &CMAPS[app.cmap];
-    let interp = match app.interp {
+    let c = &CMAPS[app.s.cmap];
+    let interp = match app.s.interp {
         Interp::Nearest => "",
         Interp::Bilinear => " bilinear",
     };
     s.push(Span::raw(format!("  {}{mode}{interp}", c.name)).dim());
-    if app.cvd {
+    if app.s.cvd {
         s.push(match c.cvd_safe {
             true => Span::raw(" cvd").dim(),
             false => Span::raw(" (not cvd-friendly)").red(),
@@ -562,7 +563,7 @@ fn help_line(app: &App) -> String {
     if let Some(m) = &app.message {
         return m.clone();
     }
-    let v = app.var_info();
+    let v = app.s.var_info();
     let steps = v.step_dims();
     let mut h = String::new();
     if let Some(&d) = steps.first() {
@@ -579,7 +580,7 @@ fn help_line(app: &App) -> String {
         };
     }
     h += "v var  c cmap  r range  : cmd  ";
-    if app.cat.compare {
+    if app.s.info().compare {
         h += "d A-B/A/B  ";
     }
     if app.probe.is_some() {
@@ -590,12 +591,12 @@ fn help_line(app: &App) -> String {
 
 fn draw_picker(f: &mut Frame, app: &App) {
     let Some(p) = &app.picker else { return };
-    let vars = filtered_vars(&app.cat, &p.query);
+    let vars = app.s.filtered_vars(&p.query);
     let area = f.area();
     let w = (area.width * 2 / 3).max(30).min(area.width);
     let h = (area.height * 2 / 3).max(8).min(area.height);
     let r = centered(area, w, h);
-    let several = app.cat.sources.len() > 1;
+    let several = app.s.info().sources.len() > 1;
     let items: Vec<ListItem> = vars
         .iter()
         .map(|(r, v)| {
@@ -612,7 +613,7 @@ fn draw_picker(f: &mut Frame, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::raw(format!("{kind} ")).dim(),
                 Span::raw(if several {
-                    format!("{}:", app.cat.label(r.source))
+                    format!("{}:", app.s.info().label(r.source))
                 } else {
                     String::new()
                 })
