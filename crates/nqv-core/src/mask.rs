@@ -124,22 +124,29 @@ pub(crate) fn mask_index(v: &VarInfo, index: &[usize], m: &VarInfo) -> Result<Ve
 pub fn check_mask(cat: &Catalog, var: &VarRef, mask: &Mask) -> Result<()> {
     let v = cat.var(var)?;
     for c in &mask.conds {
-        let m = cat.var(&c.var)?;
-        mask_index(v, &vec![0; v.dims.len()], m)?;
-        if let Kind::Map { y, x } = v.kind() {
-            let same = match m.kind() {
-                Kind::Map { y: my, x: mx } => m.dims[my] == v.dims[y] && m.dims[mx] == v.dims[x],
-                _ => false,
-            };
-            if !same {
-                bail!(
-                    "mask: '{}' is not on the grid of '{}' ({}, {})",
-                    m.name,
-                    v.name,
-                    v.dims[y].name,
-                    v.dims[x].name
-                );
-            }
+        check_overlay(v, cat.var(&c.var)?, "mask")?;
+    }
+    Ok(())
+}
+
+/// Check that `m` can be read alongside the shown variable `v` (as a mask or contours):
+/// its dimensions are dimensions of `v` or have length 1, and when `v` is a map, `m` is
+/// a map on the same grid.
+pub(crate) fn check_overlay(v: &VarInfo, m: &VarInfo, what: &str) -> Result<()> {
+    mask_index(v, &vec![0; v.dims.len()], m)?;
+    if let Kind::Map { y, x } = v.kind() {
+        let same = match m.kind() {
+            Kind::Map { y: my, x: mx } => m.dims[my] == v.dims[y] && m.dims[mx] == v.dims[x],
+            _ => false,
+        };
+        if !same {
+            bail!(
+                "{what}: '{}' is not on the grid of '{}' ({}, {})",
+                m.name,
+                v.name,
+                v.dims[y].name,
+                v.dims[x].name
+            );
         }
     }
     Ok(())

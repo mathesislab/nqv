@@ -3,7 +3,7 @@
 
 use font8x8::{BASIC_FONTS, LATIN_FONTS, UnicodeFonts};
 use image::{Rgba as Px, RgbaImage};
-use nqv_core::Series;
+use nqv_core::{Series, nice_ticks};
 use nqv_render::{Cmap, Norm, Rgba};
 
 use crate::ui::fmt;
@@ -134,24 +134,6 @@ impl Canvas {
 
 fn text_width(s: &str) -> u32 {
     s.chars().count() as u32 * GLYPH
-}
-
-/// About `n` round tick values (1, 2 or 5 times a power of ten apart) within [lo, hi].
-pub fn nice_ticks(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    if !(lo.is_finite() && hi.is_finite()) || hi <= lo || n == 0 {
-        return vec![];
-    }
-    let raw = (hi - lo) / n as f64;
-    let mag = 10f64.powf(raw.log10().floor());
-    // The round step closest to the raw one (on a log scale).
-    let step = [1.0, 2.0, 5.0, 10.0]
-        .iter()
-        .map(|m| m * mag)
-        .min_by(|a, b| (a / raw).ln().abs().total_cmp(&(b / raw).ln().abs()))
-        .unwrap_or(mag);
-    let first = (lo / step).ceil() as i64;
-    let last = (hi / step).floor() as i64;
-    (first..=last).map(|k| k as f64 * step).collect()
 }
 
 /// A map image with tick labels (pixel position, text) along its edges.
@@ -286,23 +268,6 @@ fn widen(a: f64, b: f64) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ticks_are_round() {
-        assert_eq!(nice_ticks(0.0, 10.0, 5), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
-        assert_eq!(
-            nice_ticks(-21000.0, 0.0, 4),
-            [-20000.0, -15000.0, -10000.0, -5000.0, 0.0]
-        );
-        let t = nice_ticks(41.85, 42.85, 5);
-        let want = [42.0, 42.2, 42.4, 42.6, 42.8];
-        assert_eq!(t.len(), want.len());
-        assert!(
-            t.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-9),
-            "{t:?}"
-        );
-        assert!(nice_ticks(1.0, 1.0, 5).is_empty());
-    }
 
     #[test]
     fn text_draws_pixels() {

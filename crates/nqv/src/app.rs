@@ -928,7 +928,7 @@ impl App {
                     let (Some(a), Some(b)) = (end(0), end(n - 1)) else {
                         return vec![];
                     };
-                    png::nice_ticks(a.min(b), a.max(b), 5)
+                    nqv_core::nice_ticks(a.min(b), a.max(b), 5)
                         .into_iter()
                         .map(|t| {
                             let p = if b == a {
