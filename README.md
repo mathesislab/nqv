@@ -31,7 +31,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:v NAME` | `-v NAME` | variable (fuzzy like the picker; `file:var` picks the file) |
 | `:t VALUE`, `:t @INDEX` | `-t VALUE` | step along the first stepped dimension (usually time) |
 | `:at DIM=VALUE` | `--at DIM=VALUE` | any dimension (repeatable); map dimensions pick the clicked cell |
-| `:range MIN MAX`, `auto`, `sym` | `--range MIN,MAX` | colour range (y range for line plots) |
+| `:range MIN MAX`, `auto`, `sym`, `log [MIN MAX]` | `--range MIN,MAX`, `log,MIN,MAX` | colour range (y range for line plots); `log`: logarithmic colours, by default over at most four decades below the maximum |
 | `:cmap NAME` | `--cmap NAME` | colour map: viridis, RdBu_r, grays |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
@@ -50,7 +50,7 @@ Keys:
 | ↑ ↓ | second stepped dimension (e.g. level) |
 | click | value at a map cell, and its series below the map; Esc closes |
 | `v` | variable picker: type to filter (fuzzy: `hice` finds `H_ice`; `ice:` limits to files matching `ice`), ↑↓, Enter, Esc |
-| `c` / `r` | next colour map / range auto ↔ symmetric (also leaves a fixed range) |
+| `c` / `r` | next colour map / range: auto → symmetric → log → auto (also leaves a fixed range) |
 | `d` | comparison: A − B, A, B (A and B share one colour range) |
 | `o` / `O` | file browser (Enter open, Backspace up, `c` folder as collection) / current folder as a collection |
 | `[` `]` | previous / next file (in the folder or the collection); the variable stays where it exists |
@@ -67,7 +67,7 @@ Masks hide values where conditions on other variables hold:
 :mask off
 ```
 
-Contours are drawn over maps: about 10 round levels by default, or `step=500`, `n=5`, `levels=0,1000,2000`. The contoured variable must be on the same grid; contours follow the mask. Lines are black or white, whichever contrasts with the colour underneath; in half-block terminals cells crossed by a line show it as braille dots.
+In PNGs, contour levels are labelled along the lines and the colour bar has round ticks (powers of ten on a log scale). Contours are drawn over maps: about 10 round levels by default, or `step=500`, `n=5`, `levels=0,1000,2000`. The contoured variable must be on the same grid; contours follow the mask. Lines are black or white, whichever contrasts with the colour underneath; in half-block terminals cells crossed by a line show it as braille dots.
 
 ### Recipes
 
@@ -78,7 +78,7 @@ A recipe is a file of viewer commands, one per line (`#` comments), in `~/.nqv/r
 v ice_NH-16KM.nc:uxy_s
 mask f_ice < 0.5
 contour z_srf step=500
-range 0 300
+range log 1 3000
 ```
 
 `nqv -r ice run/` applies it after opening the paths; options on the command line are applied after the recipe and override it. Works with `--png`, `-j`, `--vs`. In the viewer, `:recipe ice` applies it and `:save NAME` writes the current settings as a recipe.
