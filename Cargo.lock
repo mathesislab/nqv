@@ -2722,6 +2722,11 @@ dependencies = [
 name = "nqv-desktop"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "nqv-core",
+ "nqv-proto",
+ "nqv-render",
+ "nqv-session",
  "serde",
  "serde_json",
  "tauri",

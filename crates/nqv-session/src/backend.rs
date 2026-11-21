@@ -143,7 +143,7 @@ impl Files for LocalFiles {
 
 /// Data for a session. Every method is one request of the protocol a remote backend
 /// speaks.
-pub trait Backend: Files {
+pub trait Backend: Files + Send {
     /// Open other paths in place of the current ones (the same connection, remotely).
     fn reopen(&mut self, paths: &[PathBuf], mode: &OpenMode) -> Result<()>;
     fn info(&self) -> &CatalogInfo;

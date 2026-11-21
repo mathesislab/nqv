@@ -18,3 +18,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+nqv-core = { version = "0.1.0", path = "../crates/nqv-core", features = ["serde"] }
+nqv-render = { version = "0.1.0", path = "../crates/nqv-render" }
+nqv-session = { version = "0.1.0", path = "../crates/nqv-session" }
+nqv-proto = { version = "0.1.0", path = "../crates/nqv-proto" }
+anyhow = "1.0.104"

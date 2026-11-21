@@ -473,7 +473,7 @@ pub fn bar_ticks(n: &Norm) -> Vec<(f32, String)> {
 
 /// Up to three labels per contour level, at segment midpoints inside the `w` by `h`
 /// map and at least 120 pixels from any other label: (x, y, text).
-fn contour_labels(lines: &[ContourLine], w: u32, h: u32) -> Vec<(f32, f32, String)> {
+pub fn contour_labels(lines: &[ContourLine], w: u32, h: u32) -> Vec<(f32, f32, String)> {
     let mut out: Vec<(f32, f32, String)> = vec![];
     for line in lines {
         let text = fmt(line.level as f32);
