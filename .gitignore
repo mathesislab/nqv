@@ -5,3 +5,5 @@ node_modules
 /build
 /.svelte-kit
 /src-tauri/gen/schemas
+/linux-out
+/linux-out.log
