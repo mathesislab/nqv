@@ -2,7 +2,7 @@
 //! line, variable picker.
 
 use nqv_core::{Interp, Kind, Series, Show, Stats, finite_range};
-use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast, extends};
+use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast, extends, faint};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -16,7 +16,7 @@ use ratatui_image::Image;
 use crate::Output;
 use crate::app::{App, Frame as PlotFrame, MapImage, Plot};
 use nqv_session::command::{self, RangeMode};
-use nqv_session::format::{dim_at, fmt};
+use nqv_session::format::{dim_at, fmt, lonlat};
 
 pub struct Areas {
     pub plot: Rect,
@@ -66,8 +66,8 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
             Plot::Map(m) => {
                 match &m.image {
                     MapImage::Pixels(proto) => f.render_widget(Image::new(proto), m.rect),
-                    MapImage::Blocks { img, braille } => {
-                        draw_blocks(f, img, braille, m.rect, truecolor)
+                    MapImage::Blocks { img, braille, grid } => {
+                        draw_blocks(f, img, braille, grid, m.rect, truecolor)
                     }
                 }
                 if let Some((st, r)) = &m.stats {
@@ -409,9 +409,10 @@ fn color(c: [u8; 3], truecolor: bool) -> Color {
 
 /// Two image rows per cell: '▀' with the top pixel as foreground, the bottom one as
 /// background. Cells crossed by contour lines (`braille` not 0) show the braille pattern
-/// instead, in a colour contrasting with the mean of the two pixels behind it. `r` is the
-/// rectangle from `centered`.
-fn draw_blocks(f: &mut Frame, img: &Rgba, braille: &[u8], r: Rect, truecolor: bool) {
+/// instead, in a colour contrasting with the mean of the two pixels behind it; cells
+/// crossed only by the graticule (`grid`) show its pattern, fainter. `r` is the rectangle
+/// from `centered`.
+fn draw_blocks(f: &mut Frame, img: &Rgba, braille: &[u8], grid: &[u8], r: Rect, truecolor: bool) {
     let px = |x: u32, y: u32| {
         let i = 4 * (y * img.w + x) as usize;
         [img.data[i], img.data[i + 1], img.data[i + 2]]
@@ -423,16 +424,22 @@ fn draw_blocks(f: &mut Frame, img: &Rgba, braille: &[u8], r: Rect, truecolor: bo
             let top = px(x, y);
             let bottom = (y + 1 < img.h).then(|| px(x, y + 1));
             let cell = &mut buf[(r.x + cx, r.y + cy)];
-            let dots = braille
-                .get((cy as u32 * img.w + x) as usize)
-                .copied()
-                .unwrap_or(0);
-            if dots != 0 {
+            let at = |l: &[u8]| {
+                l.get((cy as u32 * img.w + x) as usize)
+                    .copied()
+                    .unwrap_or(0)
+            };
+            let (dots, faint_dots) = (at(braille), at(grid));
+            if dots != 0 || faint_dots != 0 {
                 let b = bottom.unwrap_or(top);
                 let mean = std::array::from_fn(|k| ((top[k] as u16 + b[k] as u16) / 2) as u8);
-                let ch = char::from_u32(0x2800 + dots as u32).unwrap_or(' ');
+                let (d, fg) = match dots {
+                    0 => (faint_dots, faint(mean)),
+                    _ => (dots, contrast(mean)),
+                };
+                let ch = char::from_u32(0x2800 + d as u32).unwrap_or(' ');
                 cell.set_char(ch)
-                    .set_fg(color(contrast(mean), truecolor))
+                    .set_fg(color(fg, truecolor))
                     .set_bg(color(mean, truecolor));
                 continue;
             }
@@ -507,7 +514,11 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
     {
         let ys = dim_at(&v.dims[y], p.cell.0, p.coords.0);
         let xs = dim_at(&v.dims[x], p.cell.1, p.coords.1);
-        s.push(Span::raw(format!("  @ {ys} {xs} = ")));
+        let ll = p
+            .lonlat
+            .map(|(lon, lat)| format!(" ({})", lonlat(lon, lat)))
+            .unwrap_or_default();
+        s.push(Span::raw(format!("  @ {ys} {xs}{ll} = ")));
         s.push(match &p.value {
             Ok(x) => Span::raw(fmt(*x)).bold(),
             Err(e) => Span::raw(e.clone()).red(),

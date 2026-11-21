@@ -374,6 +374,28 @@ pub fn draw_lines(img: &mut Rgba, segments: &[Segment]) {
     }
 }
 
+/// Halfway from `c` towards its contrasting colour: for lines that should show but not
+/// stand out, such as meridians and parallels.
+pub fn faint(c: [u8; 3]) -> [u8; 3] {
+    let k = contrast(c);
+    std::array::from_fn(|i| ((c[i] as u16 + k[i] as u16) / 2) as u8)
+}
+
+/// Draw `segments` into `img` faintly (`faint` of the map under them).
+pub fn draw_faint_lines(img: &mut Rgba, segments: &[Segment]) {
+    let (w, h) = (img.w as i64, img.h as i64);
+    let map = img.data.clone();
+    for s in segments {
+        line_pixels(s, |x, y| {
+            if (0..w).contains(&x) && (0..h).contains(&y) {
+                let i = 4 * (y * w + x) as usize;
+                let c = faint([map[i], map[i + 1], map[i + 2]]);
+                img.data[i..i + 3].copy_from_slice(&c);
+            }
+        });
+    }
+}
+
 /// Braille patterns for segments over a `w` by `h` pixel image drawn as half-blocks
 /// (one cell = 1 x 2 pixels = 2 x 4 braille dots): one byte of dot bits per cell, row by
 /// row (`w` cells per row, `h.div_ceil(2)` rows); 0 where no line passes. The character

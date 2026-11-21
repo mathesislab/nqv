@@ -8,6 +8,14 @@ pub fn dim_at(d: &DimInfo, i: usize, coord: Option<f32>) -> String {
     format!("{}={}/{}{val}", d.name, i + 1, d.len)
 }
 
+/// A longitude and latitude as `72.31°N 38.45°W`.
+pub fn lonlat(lon: f64, lat: f64) -> String {
+    let lon = (lon + 180.0).rem_euclid(360.0) - 180.0;
+    let ns = if lat < 0.0 { 'S' } else { 'N' };
+    let ew = if lon < 0.0 { 'W' } else { 'E' };
+    format!("{:.2}°{ns} {:.2}°{ew}", lat.abs(), lon.abs())
+}
+
 /// Compact number format for labels.
 pub fn fmt(v: f32) -> String {
     let a = v.abs();

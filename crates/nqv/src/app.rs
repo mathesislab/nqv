@@ -10,7 +10,7 @@ use nqv_core::{
     ContourSpec, Interp, Kind, Mask, RangeEstimate, Segment, Series, Show, Stats, VarRef, ViewSpec,
     fit_size,
 };
-use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines};
+use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_faint_lines, draw_lines};
 use nqv_session::command::{self, RangeMode};
 use nqv_session::session::dir_of;
 use nqv_session::{Effect, LocalFiles, Overlays, Probe, Session};
@@ -44,8 +44,13 @@ pub enum MapImage {
     /// Encoded for an image protocol.
     Pixels(Protocol),
     /// Drawn as half-blocks, two pixels per cell; cells crossed by contour lines show
-    /// these braille patterns instead (0: none).
-    Blocks { img: Rgba, braille: Vec<u8> },
+    /// these braille patterns instead (0: none), and cells crossed by the graticule
+    /// (meridians and parallels) `grid`'s, fainter.
+    Blocks {
+        img: Rgba,
+        braille: Vec<u8>,
+        grid: Vec<u8>,
+    },
 }
 
 /// Everything a cached plot depends on.
@@ -482,6 +487,14 @@ impl App {
         );
         let (w, h) = (rgba.w, rgba.h);
         let segments: Vec<Segment> = m.contours.into_iter().flat_map(|l| l.segments).collect();
+        let grid: Vec<Segment> = self
+            .s
+            .graticule((w, h))
+            .map(|g| g.meridians.into_iter().chain(g.parallels))
+            .into_iter()
+            .flatten()
+            .flat_map(|l| l.segments)
+            .collect();
         let map_area = match (side, below) {
             (true, _) => Rect {
                 width: area.width - ui::STATS_WIDTH - 1,
@@ -509,8 +522,10 @@ impl App {
             Output::Blocks { .. } => MapImage::Blocks {
                 img: rgba,
                 braille: braille_cells(w, h, &segments),
+                grid: braille_cells(w, h, &grid),
             },
             Output::Pixels(p) => {
+                draw_faint_lines(&mut rgba, &grid);
                 draw_lines(&mut rgba, &segments);
                 match pixels(p, rgba, map_area) {
                     Ok(proto) => MapImage::Pixels(proto),
