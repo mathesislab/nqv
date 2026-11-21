@@ -2,7 +2,19 @@
 
 Quick-look viewer for NetCDF files that runs in the terminal you are already in, local or over ssh. No X11 needed.
 
-Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (e.g. time series) as line plots. Dimensions of length 1 are ignored, so `(time, lat=1, lon=1)` is a line plot. Design: [docs/architecture.md](docs/architecture.md).
+Website and downloads: <https://mathesislab.github.io/nqv/>. Shows 2D slices of regular-grid variables as maps, 1D variables (e.g. time series) as line plots. Dimensions of length 1 are ignored, so `(time, lat=1, lon=1)` is a line plot. Design: [docs/architecture.md](docs/architecture.md).
+
+## Install
+
+From the [latest release](https://github.com/mathesislab/nqv/releases/latest):
+
+- terminal viewer, one static file: `nqv-linux-x86_64`, `nqv-linux-aarch64` (HPC systems, any Linux), `nqv-macos-aarch64`; e.g.
+  ```bash
+  curl -L -o ~/bin/nqv https://github.com/mathesislab/nqv/releases/latest/download/nqv-linux-x86_64 && chmod +x ~/bin/nqv
+  ```
+- desktop app: `nqv-desktop-macos-aarch64.dmg`, `nqv-desktop-linux-amd64.AppImage` or `.deb` (it updates itself when asked).
+
+Or build it (below).
 
 ## Use
 
@@ -102,12 +114,14 @@ Graphics output is detected at start. Terminals without an image protocol (Termi
 
 ### Desktop app
 
-A window on the same session (Tauri 2 + SvelteKit; macOS, Linux, Windows): the map drawn with WebGL at full screen resolution, colour bar and statistics, wheel to zoom around the pointer, drag to pan, click for a cell's value and series, sliders for time and levels, the toolbar for colour map, range, interpolation, colour-blind mode and comparison side, and the same `:` commands and keys (`z` whole map, `o` open). Open local files or folders, or paths on a host over ssh (as `nqv HOST:PATH`); `nqv-desktop FILE...` opens local files at start. `Save PNG…` writes the PNG of `--png`, `copy command` the terminal command line for the view.
+A window on the same session (Tauri 2 + SvelteKit; macOS and Linux): the map drawn with WebGL at full screen resolution, colour bar and statistics, wheel to zoom around the pointer, drag to pan, click for a cell's value and series, sliders for time and levels, the toolbar for colour map, range, interpolation, colour-blind mode and comparison side, and the same `:` commands and keys (`z` whole map, `o` open). Open local files or folders, or paths on a host over ssh (as `nqv HOST:PATH`); `nqv-desktop FILE...` opens local files at start, as does a double click on an `.nc` file. Hosts need ssh to log in without a prompt (a key in ssh-agent): the window has no terminal to ask in. On Linux, a blank window on NVIDIA's driver needs `WEBKIT_DISABLE_DMABUF_RENDERER=1`. `Save PNG…` writes the PNG of `--png`, `copy command` the terminal command line for the view.
 
 ```bash
 npm install
 npm run tauri dev
 ```
+
+`scripts/linux-docker.sh` builds and tries the Linux app from a Mac (Docker). Releases: [docs/releasing.md](docs/releasing.md).
 
 ## Build
 
