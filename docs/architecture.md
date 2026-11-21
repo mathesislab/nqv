@@ -26,11 +26,10 @@ source(s) ─► nqv-core ─► Raster ─► nqv-render ─► RGBA ─► enc
 |---|---|---|
 | `nqv-core` | Catalog (files, groups, variables, grids), navigation, slicing, pixel→cell lookup, ranges, probes, diffs, caching, prefetch. No display code. | NetCDF reader, kiddo, rayon |
 | `nqv-render` | Normalisation, colour maps, colour bar, line plots. Pure functions; also builds to WASM. | none |
-| `nqv-session` | View state, commands, recipes, file switching, PNG output; data through a `Backend` trait (`Local`, or `Remote` over ssh). Shared by the terminal app, the Tauri desktop app and `nqv-local`. | core, render |
-| `nqv-proto` | Protocol (implemented): one request per `Backend` method plus `MapData` (a frame in one round trip), `ListDir`, `Describe`, `Open`; postcard frames with a length prefix and a version handshake; maps quantised to u16 (65535 missing) and LZ4-compressed; `serve` (behind `nqv serve --stdio`) and the `Remote` backend over ssh (`nqv HOST:PATH`). | core, session |
+| `nqv-session` | View state, commands, recipes, file switching, PNG output; data through a `Backend` trait (`Local`, or `Remote` over ssh). Shared by the terminal app and the Tauri desktop app. | core, render |
+| `nqv-proto` | Protocol (implemented): one request per `Backend` method plus `MapData` (a frame in one round trip), `ListDir`, `Describe`, `Open`; postcard frames with a length prefix and a version handshake; maps quantised to u16 (65535 missing) and LZ4-compressed; `serve` (behind `nqv serve --stdio`) and the `Remote` backend over ssh (`nqv HOST:PATH`); `handoff`, the view `nqv -g` hands to the desktop app over a forwarded socket. | core, session |
 | `nqv` | The single HPC binary: terminal UI, browse mode, `nqv serve --stdio`. | all of the above, ratatui |
-| `nqv-desktop` | Tauri 2 + SvelteKit window on a `Session` (implemented): commands return the session's state as JSON and maps as raw f32 values with a JSON header (binary IPC); WebGL2 colours them (R32F texture, 256-entry colour map texture, log in the shader), so a colour map change only redraws. Zoom and pan work on `Session::zoom` (the `ViewSpec` region). | session, proto |
-| `nqv-local` | Laptop agent: native window and web client, reached from the HPC via a forwarded socket. | proto, render |
+| `nqv-desktop` | Tauri 2 + SvelteKit windows, each on a `Session` (implemented): commands return the session's state as JSON and maps as raw f32 values with a JSON header (binary IPC); WebGL2 colours them (R32F texture, 256-entry colour map texture, log in the shader), so a colour map change only redraws. Zoom and pan work on `Session::zoom` (the `ViewSpec` region). Listens on `~/.nqv/desktop.sock` for views handed over by `nqv -g`. | session, proto |
 
 Cut points:
 
@@ -106,7 +105,7 @@ Navigation lives in the core and the protocol, so every front end can change fil
 - `nqv file.nc [-v var]`, `nqv run/` (collection), `nqv f1 f2 run2/ ...` (collection), `nqv --diff a.nc b.nc` or `nqv --diff run1/ run2/` (comparison), `nqv` (browser on cwd). `nqv -j f1 f2 ...` joins files along the record dimension (`--join-dim` for another); `nqv -j seg1/ seg2/` joins same-named files across folders. A `JoinedReader` implements `Reader`, so everything above it is unchanged; files are ordered by their first coordinate value.
 - `nqv f.nc temp -t -1 -z 100 --region arctic`: jump straight to a view. Every view can print the command line that reproduces it.
 - Opener for `.nc` in yazi/lf/ranger; target for fzf.
-- **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Works on Albedo and Levante; see Verified.)
+- **Handoff to the laptop** (implemented). `nqv -g file.nc` (or `NQV_GUI=1`) on the HPC connects to the desktop app's socket, forwarded by ssh (`RemoteForward /run/user/UID/nqv.sock %d/.nqv/desktop.sock`), sends a `Handoff` (absolute paths, open mode, the view options as `Command`s) and becomes the server for that view on the same stream; the app opens it as a `Remote` in a new window and the process ends when the window closes. On the same machine the app opens the files itself. Without the socket `nqv -g` draws in the terminal and says why. Explicit `-g` rather than always: a window opening uninvited from every `nqv` call would surprise. A browser client was dropped: the desktop app covers macOS and Linux.
 - `nqv serve --stdio`: for clients that start the server themselves over `ssh host nqv serve --stdio`.
 
 ## Core API (sketch)
@@ -179,15 +178,16 @@ ice:H_ice  t=124/501  [0, 3500] viridis
   - The CLIMBER-X reference files use chunked storage with deflate level 1 + shuffle, which `netcdf-reader` supports. Albedo's netcdf-c 4.8.1 predates zstd support (4.9.0), so files written with it can't be zstd anyway.
   - Decision proposed: `nqv-core` reads through a `Reader` trait (needed anyway for Zarr later). First implementation: `netcdf-reader`, for a fully static musl binary and parallel reads. Test it on CLIMBER-X, Yelmo and FESOM output before committing to it.
 
+- **Forwarded sockets are left behind.** Albedo's sshd (as OpenSSH's default, `StreamLocalBindUnlink no`) neither removes a forwarded socket when the session ends nor replaces one at login: with a fixed path in `/tmp`, every second login on a node fails to forward (`remote port forwarding failed`), and the client's `StreamLocalBindUnlink` does not help. `/run/user/UID` goes when the user's last session on the node ends (logind, about 10 s after), so the socket goes with it: tested on albedo0. `nqv -g` removes a socket that refuses (left by a session that ended while another stays) and asks to log in again.
+
 ## Open questions
 
 - `netcdf-reader` on large real files: correctness, speed, memory (spike step 1).
 - Rules for auto-detecting "stitch along time" versus "collection" for a set of files; `--stitch` / `--collection` as overrides.
-- Socket path for the handoff: node-local (`/tmp/nqv-%r.sock`) or in `$HOME` with connect-and-fall-back.
 
 ## Build order
 
 1. Spike: `nqv file.nc` with core slice reading, render, and the half-block + kitty tiers with detection. Test from Albedo into Terminal.app and Ghostty. The real `Raster` type from the start.
 2. Core proper: catalog, collections, navigation, lazy reads, range estimates, prefetch, mesh index cache.
-3. Protocol and `nqv serve --stdio`; socket handoff to `nqv-local`.
-4. Native and web clients: the Tauri desktop app (done); `nqv-local` with a browser client and the `--gui` handoff (next).
+3. Protocol and `nqv serve --stdio` (done).
+4. The Tauri desktop app and the `nqv -g` handoff to it (done).

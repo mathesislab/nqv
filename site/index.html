@@ -58,7 +58,9 @@
         pans, a click shows the series below the map. Open local files, or <code>albedo0:/path/to/run</code>: nqv
         starts itself on the host over ssh and only screen-sized maps cross the network, so a 100 MB file opens in
         seconds.</p>
-      <p>The terminal viewer does the same with <code>nqv HOST:PATH</code>, drawing on your laptop's terminal.</p>
+      <p>Already on the cluster? <code>nqv -g file.nc</code> in your ssh session opens the view in the app on
+        your laptop, through a socket ssh forwards. The terminal viewer reads remote files too, with
+        <code>nqv HOST:PATH</code>.</p>
     </div>
     <img src="images/png.png" alt="A PNG written by nqv --png: the map with axes, colour bar, contour labels" loading="lazy" width="780" height="800">
   </article>

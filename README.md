@@ -35,6 +35,7 @@ nqv [PATH...] [options]
 | `-j seg1/ seg2/ ...` | the files of the same name across the folders joined, e.g. restart segments |
 | `A... --vs B...` | comparison of two sets of paths, each opened as without `--vs`; with `-j` both sides are joined: `nqv -j run1/seg* --vs run2/seg*` |
 | `HOST:PATH...` | any of the above on another machine over ssh: the data is read there, the view drawn here (see below) |
+| `-g PATH...` | any of the above in the desktop app on your laptop, from an ssh session on a cluster (see below); else in the terminal |
 | (none) | file browser |
 
 Everything the viewer shows can be set from the command line; each `:` command in the viewer has a flag:
@@ -122,6 +123,19 @@ npm run tauri dev
 ```
 
 `scripts/linux-docker.sh` builds and tries the Linux app from a Mac (Docker). Releases: [docs/releasing.md](docs/releasing.md).
+
+### From a cluster to the desktop app
+
+`nqv -g run/ice.nc -v H_ice` in an ssh session on a cluster opens the view in the desktop app on your laptop, as `code file` does in VS Code's terminals; the same options as in the terminal apply. The `nqv` on the cluster reads the data and serves it to the window till the window closes (Ctrl-C stops it; `&` gives the prompt back). Each view handed over gets a window of its own. Without the app, or without the forward below, `nqv -g` says why and draws in the terminal. `NQV_GUI=1` makes `-g` the default.
+
+The app listens on `~/.nqv/desktop.sock` while it runs; ssh forwards that socket to the cluster. On your laptop, in `~/.ssh/config`:
+
+```
+Host albedo0
+  RemoteForward /run/user/60063/nqv.sock %d/.nqv/desktop.sock
+```
+
+`60063` is your user id on the cluster (`id -u` there); `nqv -g` prints the line for the host it runs on. The socket goes in `/run/user/UID`, which goes when your last session on the login node ends: sshd leaves forwarded sockets behind and cannot forward to the same path again (the `/tmp` path `nqv -g` also tries, for systems without `/run/user`, keeps that problem). A socket left behind anyway (two sessions on one node, the first closed) is removed by `nqv -g`, which then asks you to log in again. The cluster needs the same nqv version as the app. `nqv -g` on the laptop itself opens the files in the app directly.
 
 ## Build
 

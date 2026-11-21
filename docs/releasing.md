@@ -53,8 +53,9 @@ On Linux the AppImage updates itself; a `.deb` is updated by installing the new 
 `.github/workflows/ci.yml` on each push to main and each pull request, on macOS and
 Linux: `npm run check`, the frontend built, `cargo fmt --check`, `cargo clippy -D
 warnings`, `cargo test`, and on Linux a smoke test (`scripts/ci/smoke-linux.sh`): the
-desktop app opens the test file under xvfb and must stay up without a panic; its
-screenshot is kept as the run's artifact `smoke-linux`.
+desktop app opens the test file under xvfb and must stay up without a panic; `nqv -g`,
+as from a cluster, hands it a view, which must open, and closing its window must end
+`nqv -g`. The screenshots are kept as the run's artifact `smoke-linux`.
 
 `scripts/linux-docker.sh` does the same from a Mac in Ubuntu 22.04 (Docker, e.g. colima),
 then builds the `.deb` and the AppImage (without update signatures) into `linux-out/`.
