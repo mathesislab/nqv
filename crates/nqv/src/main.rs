@@ -2,6 +2,7 @@
 
 mod app;
 mod browser;
+mod gui;
 mod ui;
 
 use std::io::stdout;
@@ -41,6 +42,10 @@ struct Args {
     /// Command that starts the server on a HOST:PATH host (default: nqv, else ~/bin/nqv)
     #[arg(long, value_name = "CMD", help_heading = "Open")]
     remote_cmd: Option<String>,
+    /// Show in the nqv desktop app on your laptop (through an ssh-forwarded socket), else
+    /// here; also with NQV_GUI=1
+    #[arg(short, long, help_heading = "Open")]
+    gui: bool,
     /// Join files along time; folders: same-named files across them
     #[arg(short, long, help_heading = "Open")]
     join: bool,
@@ -152,6 +157,8 @@ Opening:
                               (by nqv serve --stdio), shown here
   nqv A... --vs B...          comparison of two sets of paths, each opened as without --vs;
                               with -j both sides are joined (two segmented runs)
+  nqv -g PATH...              in the nqv desktop app on your laptop, if it is reachable
+                              (README: Desktop window from the cluster); else here
   nqv                         file browser
 
 Values:
@@ -265,6 +272,15 @@ fn main() -> Result<()> {
                 join_dim: args.join_dim.clone(),
                 vs,
             };
+            let gui = args.gui || std::env::var("NQV_GUI").is_ok_and(|v| v == "1");
+            if gui && args.png.is_none() {
+                if host.is_some() {
+                    bail!("-g with HOST:PATH: open it in the desktop app (Open…)");
+                }
+                if gui::show(&paths, &mode, commands(&args).map_err(anyhow::Error::msg)?)? {
+                    return Ok(());
+                }
+            }
             let session = match &host {
                 None => Session::open(&paths, &mode)?,
                 Some(h) => {
