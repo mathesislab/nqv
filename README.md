@@ -33,6 +33,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:at DIM=VALUE` | `--at DIM=VALUE` | any dimension (repeatable); map dimensions pick the clicked cell |
 | `:range MIN MAX`, `auto`, `sym`, `log [MIN MAX]` | `--range MIN,MAX`, `log,MIN,MAX` | colour range (y range for line plots); `log`: logarithmic colours or y axis, by default over at most four decades below the maximum |
 | `:cmap NAME` | `--cmap NAME` | colour map: viridis, cividis, plasma, inferno, magma, RdBu_r, grays, jet |
+| `:interp nearest\|bilinear` | `--interp bilinear` | map resampling: bilinear blends neighbouring cells where the screen is finer than the grid (smooth maps of coarse grids); missing and masked cells stay sharp |
 | `:cvd on\|off` | `--cvd` | colour-blind mode (also `NQV_CVD=1`): `c` cycles only maps suited to colour vision deficiencies (all but jet); choosing jet anyway gives a warning |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
@@ -52,6 +53,7 @@ Keys:
 | click | value at a map cell, and its series below the map; Esc closes |
 | `v` | variable picker: type to filter (fuzzy: `hice` finds `H_ice`; `ice:` limits to files matching `ice`), ↑↓, Enter, Esc |
 | `c` / `r` | next colour map / range: auto → symmetric → log → auto (also leaves a fixed range) |
+| `i` | interpolation: nearest ↔ bilinear |
 | `d` | comparison: A − B, A, B (A and B share one colour range) |
 | `o` / `O` | file browser (Enter open, Backspace up, `c` folder as collection) / current folder as a collection |
 | `[` `]` | previous / next file (in the folder or the collection); the variable stays where it exists |

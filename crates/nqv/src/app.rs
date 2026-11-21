@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
-    Catalog, Cond, ContourLine, ContourSpec, Kind, Mask, RangeEstimate, Segment, Series,
+    Catalog, Cond, ContourLine, ContourSpec, Interp, Kind, Mask, RangeEstimate, Segment, Series,
     SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask,
     contours, fit_size, masked, netcdf_files, range, series, series_range, stats, value, view,
 };
@@ -58,6 +58,7 @@ type FrameKey = (
     Show,
     Mask,
     Option<ContourSpec>,
+    Interp,
     Rect,
 );
 
@@ -102,6 +103,8 @@ pub struct App {
     pub help: bool,
     /// Colour-blind mode: `c` cycles only colour maps that suit colour vision deficiencies.
     pub cvd: bool,
+    /// Resampling of maps to the screen: nearest cell, or bilinear when upsampling.
+    pub interp: Interp,
     pub cat: Catalog,
     pub var: VarRef,
     /// One index per dimension of `var`; entries at shown dimensions are unused.
@@ -178,6 +181,7 @@ impl App {
             origin: Origin::default(),
             help: false,
             cvd: std::env::var("NQV_CVD").is_ok_and(|v| !v.is_empty() && v != "0"),
+            interp: Interp::Nearest,
             frame: None,
             probe: None,
             panel: None,
@@ -363,6 +367,12 @@ impl App {
                 })
             }
             KeyCode::Char('c') => self.next_cmap(),
+            KeyCode::Char('i') => {
+                self.interp = match self.interp {
+                    Interp::Nearest => Interp::Bilinear,
+                    Interp::Bilinear => Interp::Nearest,
+                }
+            }
             KeyCode::Char('o') => {
                 let file = self.source_path();
                 self.browser = Some(Browser::new(&dir_of(&file), Some(&file)));
@@ -675,6 +685,7 @@ impl App {
             self.cat.show,
             self.active_mask.clone(),
             self.active_contour.clone(),
+            self.interp,
             area,
         );
         if self.panel.as_ref().is_some_and(|f| f.key == key) {
@@ -700,6 +711,7 @@ impl App {
             self.cat.show,
             self.active_mask.clone(),
             self.active_contour.clone(),
+            self.interp,
             area,
         );
         if self.frame.as_ref().is_some_and(|f| f.key == key) {
@@ -774,6 +786,7 @@ impl App {
                 self.cmap = i;
                 self.warn_cvd();
             }
+            Command::Interp(i) => self.interp = i,
             Command::Cvd(on) => {
                 self.cvd = on;
                 self.warn_cvd();
@@ -950,6 +963,9 @@ impl App {
             let m: Vec<String> = self.mask.iter().map(|c| c.text()).collect();
             add("mask", m.join(" and "), "--mask", m.join(" and "));
         }
+        if self.interp == Interp::Bilinear {
+            add("interp", "bilinear".into(), "--interp", "bilinear".into());
+        }
         if let Some(c) = &self.contour {
             add("contour", c.text(), "--contour", c.text());
         }
@@ -1029,6 +1045,7 @@ impl App {
                     index: self.index.clone(),
                     size: fit_size(v.dims[x].len.max(1), v.dims[y].len.max(1), area.0, area.1),
                     mask: self.active_mask.clone(),
+                    interp: self.interp,
                 };
                 let raster = view(&self.cat, &spec)?;
                 // The sampled range, widened to every value drawn (it is all on the page).
@@ -1148,6 +1165,7 @@ impl App {
             index: self.index.clone(),
             size: fit_size(nx, ny, max_w, max_h),
             mask: self.active_mask.clone(),
+            interp: self.interp,
         };
         match view(&self.cat, &spec).and_then(|r| Ok((r, range(&self.cat, &spec)?))) {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),

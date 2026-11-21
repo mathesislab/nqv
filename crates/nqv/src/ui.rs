@@ -1,7 +1,7 @@
 //! Drawing: map or line plot, colour bar, series at a clicked cell, status line, help
 //! line, variable picker.
 
-use nqv_core::{DimInfo, Kind, Series, Show, Stats, finite_range};
+use nqv_core::{DimInfo, Interp, Kind, Series, Show, Stats, finite_range};
 use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast, extends};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -127,6 +127,10 @@ const KEYS: &[(&str, &str)] = &[
         "variable picker: type to filter (fuzzy, file:var), ↑↓, Enter",
     ),
     ("c / r", "next colour map / range: auto -> symmetric -> log"),
+    (
+        "i",
+        "interpolation: nearest <-> bilinear (smooth maps of coarse grids)",
+    ),
     ("d", "comparison: A - B, A, B"),
     ("o / O", "file browser / open the folder as a collection"),
     ("[ ]", "previous / next file"),
@@ -516,7 +520,11 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         RangeMode::Log(Some(_)) => " log fixed",
     };
     let c = &CMAPS[app.cmap];
-    s.push(Span::raw(format!("  {}{mode}", c.name)).dim());
+    let interp = match app.interp {
+        Interp::Nearest => "",
+        Interp::Bilinear => " bilinear",
+    };
+    s.push(Span::raw(format!("  {}{mode}{interp}", c.name)).dim());
     if app.cvd {
         s.push(match c.cvd_safe {
             true => Span::raw(" cvd").dim(),

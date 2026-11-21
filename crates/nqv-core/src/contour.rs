@@ -85,7 +85,8 @@ pub fn contours(cat: &Catalog, view_spec: &ViewSpec, c: &ContourSpec) -> Result<
         index: mask_index(v, &view_spec.index, cv)?,
         size: (w * f, h * f),
         mask: view_spec.mask.clone(),
-        interp: Interp::Nearest,
+        // Bilinear, so lines over coarse grids are smooth rather than stair steps.
+        interp: Interp::Bilinear,
     };
     let field = view(cat, &spec)?;
     let Some((lo, hi)) = finite_range(&field.values) else {

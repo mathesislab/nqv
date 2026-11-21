@@ -2,7 +2,7 @@
 //! same function (`COMMANDS` lists the pairs), so both share one vocabulary and
 //! everything shown in the viewer can be reproduced from the command line.
 
-use nqv_core::{Levels, Op, Show};
+use nqv_core::{Interp, Levels, Op, Show};
 
 /// Each `:` command with its flag and what it does, for help screens.
 pub const COMMANDS: &[(&str, &str, &str)] = &[
@@ -40,6 +40,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "contour VAR [step=S | n=N | levels=A,B,..] | off",
         "--contour \"...\"",
         "contour lines of VAR over the map (about 10 round levels by default)",
+    ),
+    (
+        "interp nearest | bilinear",
+        "--interp bilinear",
+        "smooth maps of coarse grids: blend neighbouring cells when the screen is finer",
     ),
     (
         "cvd on | off",
@@ -101,6 +106,7 @@ pub enum Command {
     Cmap(String),
     /// Colour-blind mode on or off.
     Cvd(bool),
+    Interp(Interp),
     Show(Show),
     Quit,
 }
@@ -144,7 +150,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -161,6 +167,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "save" if !arg.is_empty() => Ok(Command::Save(arg.to_string())),
         "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),
         "cmap" if !arg.is_empty() => Ok(Command::Cmap(arg.to_string())),
+        "interp" => parse_interp(arg).map(Command::Interp),
         "cvd" => match arg {
             "on" | "" => Ok(Command::Cvd(true)),
             "off" => Ok(Command::Cvd(false)),
@@ -211,6 +218,15 @@ pub fn parse_range(arg: &str) -> Result<RangeMode, String> {
         },
         [a, b] => pair(a, b).map(|(a, b)| RangeMode::Fixed(a, b)),
         _ => Err(bad()),
+    }
+}
+
+/// `nearest` or `bilinear`.
+pub fn parse_interp(arg: &str) -> Result<Interp, String> {
+    match arg {
+        "nearest" => Ok(Interp::Nearest),
+        "bilinear" => Ok(Interp::Bilinear),
+        _ => Err(format!("interp: expected nearest or bilinear, got '{arg}'")),
     }
 }
 

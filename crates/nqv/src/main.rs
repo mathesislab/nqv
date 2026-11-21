@@ -107,6 +107,9 @@ struct Args {
     /// Colour map: viridis cividis plasma inferno magma RdBu_r grays jet
     #[arg(long, value_name = "NAME", help_heading = "Display")]
     cmap: Option<String>,
+    /// Map resampling: nearest (default) or bilinear (smooth, for coarse grids)
+    #[arg(long, value_name = "MODE", help_heading = "Display")]
+    interp: Option<String>,
     /// Colour-blind mode: suggest only colour maps suited to colour vision deficiencies
     /// (also with NQV_CVD=1)
     #[arg(long, help_heading = "Display")]
@@ -306,6 +309,9 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
     }
     if let Some(c) = &args.cmap {
         cmds.push(Command::Cmap(c.clone()));
+    }
+    if let Some(i) = &args.interp {
+        cmds.push(Command::Interp(command::parse_interp(i)?));
     }
     if let Some(m) = &args.mask {
         cmds.push(Command::Mask(command::parse_mask(m)?));
