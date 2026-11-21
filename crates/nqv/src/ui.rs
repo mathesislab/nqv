@@ -153,7 +153,7 @@ fn draw_help(f: &mut Frame) {
     let area = f.area();
     let r = centered(
         area,
-        110.min(area.width),
+        128.min(area.width),
         (lines.len() as u16 + 2).min(area.height),
     );
     f.render_widget(Clear, r);

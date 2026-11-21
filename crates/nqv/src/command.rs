@@ -19,7 +19,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "at DIM=VALUE",
         "--at DIM=VALUE",
-        "any dimension; on the map dimensions it picks the clicked cell",
+        "any dimension; map dimensions pick the clicked cell",
     ),
     (
         "range MIN MAX | auto | sym",
