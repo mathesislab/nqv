@@ -18,6 +18,7 @@ use crate::Output;
 use crate::browser::{Action, Browser};
 use crate::command::{self, Command, MaskCond, RangeMode, TimeSel};
 use crate::fuzzy;
+use crate::png;
 use crate::ui;
 
 /// What the main area shows for one state and screen area.
@@ -851,54 +852,145 @@ impl App {
         }
     }
 
-    /// Write the current map as a PNG of at most `max` pixels (data aspect kept, small
-    /// grids scaled up), with a colour bar strip below. Returns a one-line summary.
+    /// Write the current view as a PNG of at most `max` pixels: a map with a colour bar
+    /// (data aspect kept, small grids scaled up), or a line plot. Returns a summary.
     pub fn write_png(&mut self, path: &Path, max: (u32, u32)) -> Result<String> {
         self.update_mask();
         if let Some(e) = &self.mask_error {
             bail!("{e}");
         }
         let v = self.var_info().clone();
-        let Kind::Map { y, x } = v.kind() else {
-            bail!(
-                "--png: '{}' is not a map; only maps can be written for now",
-                v.name
-            );
-        };
-        let spec = ViewSpec {
-            var: self.var.clone(),
-            index: self.index.clone(),
-            size: fit_size(v.dims[x].len.max(1), v.dims[y].len.max(1), max.0, max.1),
-            mask: self.active_mask.clone(),
-        };
-        let raster = view(&self.cat, &spec)?;
-        let rg = range(&self.cat, &spec)?;
-        let norm = self.norm(rg.min, rg.max);
-        let cmap = &CMAPS[self.cmap];
-        let map = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
-        // Map, a white gap, then a colour bar 16 px high across the full width.
-        let (w, h, gap, bar) = (map.w, map.h, 6, 16);
-        let mut img = RgbaImage::from_pixel(w, h + gap + bar, image::Rgba([255, 255, 255, 255]));
-        for (i, px) in map.data.as_chunks::<4>().0.iter().enumerate() {
-            let (cx, cy) = (i as u32 % w, i as u32 / w);
-            img.put_pixel(cx, cy, image::Rgba([px[0], px[1], px[2], px[3]]));
-        }
-        for cx in 0..w {
-            let c = cmap.at((cx as f32 + 0.5) / w as f32);
-            for cy in h + gap..h + gap + bar {
-                img.put_pixel(cx, cy, image::Rgba([c[0], c[1], c[2], 255]));
+        let src = self.var.source;
+        let label = |k: usize| {
+            let d = &v.dims[k];
+            match self.cat.coord_var(src, d).and_then(|c| c.units.clone()) {
+                Some(u) => format!("{} [{u}]", d.name),
+                None => d.name.clone(),
             }
+        };
+        let title = format!(
+            "{}:{}{}  {}",
+            self.cat.label(src),
+            v.name,
+            v.units
+                .as_ref()
+                .map(|u| format!(" [{u}]"))
+                .unwrap_or_default(),
+            v.long_name.as_deref().unwrap_or("")
+        );
+        let mut sub: Vec<String> = v
+            .step_dims()
+            .iter()
+            .map(|&k| {
+                let c = self
+                    .cat
+                    .coord(src, &v.dims[k])
+                    .and_then(|c| c.get(self.index[k]).copied());
+                ui::dim_at(&v.dims[k], self.index[k], c)
+            })
+            .collect();
+        if self.cat.compare {
+            sub.push(match self.cat.show {
+                Show::Diff => "A - B".into(),
+                Show::A => "A".into(),
+                Show::B => "B".into(),
+            });
         }
+        if !self.mask.is_empty() {
+            let m: Vec<String> = self.mask.iter().map(|c| c.text()).collect();
+            sub.push(format!("mask: {}", m.join(" and ")));
+        }
+        let subtitle = sub.join("   ");
+        let cmap = &CMAPS[self.cmap];
+        let img = match v.kind() {
+            Kind::Map { y, x } => {
+                let area = png::map_area(max);
+                let spec = ViewSpec {
+                    var: self.var.clone(),
+                    index: self.index.clone(),
+                    size: fit_size(v.dims[x].len.max(1), v.dims[y].len.max(1), area.0, area.1),
+                    mask: self.active_mask.clone(),
+                };
+                let raster = view(&self.cat, &spec)?;
+                let rg = range(&self.cat, &spec)?;
+                let norm = self.norm(rg.min, rg.max);
+                let image = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
+                // Round coordinate values (or 1-based indices) as ticks, placed linearly
+                // between the cells shown at the two ends of each edge (regular grids).
+                let at = |k: usize, i: usize| {
+                    let c = self
+                        .cat
+                        .coord(src, &v.dims[k])
+                        .and_then(|c| c.get(i).copied());
+                    c.unwrap_or((i + 1) as f32) as f64
+                };
+                let ticks = |n: u32, end: &dyn Fn(u32) -> Option<f64>| {
+                    let (Some(a), Some(b)) = (end(0), end(n - 1)) else {
+                        return vec![];
+                    };
+                    png::nice_ticks(a.min(b), a.max(b), 5)
+                        .into_iter()
+                        .map(|t| {
+                            let p = if b == a {
+                                0.0
+                            } else {
+                                (t - a) / (b - a) * (n - 1) as f64
+                            };
+                            (p.round() as u32, ui::fmt(t as f32))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let xticks = ticks(raster.w, &|p| {
+                    cell_at(&self.cat, &spec, (p, 0)).map(|c| at(x, c.1))
+                });
+                let yticks = ticks(raster.h, &|p| {
+                    cell_at(&self.cat, &spec, (0, p)).map(|c| at(y, c.0))
+                });
+                png::render_map(&png::MapPlot {
+                    title,
+                    subtitle,
+                    image: &image,
+                    xticks,
+                    yticks,
+                    xlabel: label(x),
+                    ylabel: label(y),
+                    norm,
+                    cmap,
+                })
+            }
+            Kind::Series { along } => {
+                let spec = SeriesSpec {
+                    var: self.var.clone(),
+                    along,
+                    index: self.index.clone(),
+                    max_points: max.0 as usize,
+                    mask: self.active_mask.clone(),
+                };
+                let s = series(&self.cat, &spec)?;
+                let (lo, hi) = series_range(&self.cat, &spec, &s).unwrap_or((f32::NAN, f32::NAN));
+                let norm = self.norm(lo, hi);
+                png::render_line(
+                    &png::LinePlot {
+                        title,
+                        subtitle,
+                        series: &s,
+                        y: (norm.min, norm.max),
+                        xlabel: label(along),
+                        ylabel: v.units.clone().unwrap_or_default(),
+                    },
+                    max,
+                )
+            }
+            Kind::Scalar => bail!("--png: '{}' is a single value", v.name),
+        };
         img.save_with_format(path, image::ImageFormat::Png)?;
         Ok(format!(
-            "wrote {} ({w}x{}): {}:{}  colour bar [{}, {}] {}",
+            "wrote {} ({}x{}): {}:{}",
             path.display(),
-            h + gap + bar,
-            self.cat.label(self.var.source),
-            v.name,
-            norm.min,
-            norm.max,
-            cmap.name
+            img.width(),
+            img.height(),
+            self.cat.label(src),
+            v.name
         ))
     }
 

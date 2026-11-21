@@ -4,6 +4,7 @@ mod app;
 mod browser;
 mod command;
 mod fuzzy;
+mod png;
 mod ui;
 
 use std::io::stdout;
@@ -95,10 +96,10 @@ struct Args {
     #[arg(long, value_enum, help_heading = "Display")]
     gfx: Option<Gfx>,
 
-    /// Write the map to a PNG file instead of opening the viewer
+    /// Write the view (map or line plot) to a PNG file instead of opening the viewer
     #[arg(long, value_name = "FILE", help_heading = "Output")]
     png: Option<PathBuf>,
-    /// Largest PNG size, WIDTHxHEIGHT; the data aspect is kept
+    /// Largest PNG size, WIDTHxHEIGHT; maps keep the data aspect
     #[arg(
         long,
         value_name = "WxH",

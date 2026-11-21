@@ -394,7 +394,7 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
 }
 
 /// Position `i` along dimension `d`, 1-based, with its coordinate value if known.
-fn dim_at(d: &DimInfo, i: usize, coord: Option<f32>) -> String {
+pub(crate) fn dim_at(d: &DimInfo, i: usize, coord: Option<f32>) -> String {
     let val = coord.map(|c| format!(" ({})", fmt(c))).unwrap_or_default();
     format!("{}={}/{}{val}", d.name, i + 1, d.len)
 }
@@ -480,7 +480,7 @@ fn draw_picker(f: &mut Frame, app: &App) {
 }
 
 /// Compact number format for labels.
-fn fmt(v: f32) -> String {
+pub(crate) fn fmt(v: f32) -> String {
     let a = v.abs();
     if !v.is_finite() {
         format!("{v}")
