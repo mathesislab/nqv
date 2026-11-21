@@ -270,6 +270,112 @@ footer {
   font-size: 14px;
 }
 
+/* terminal or desktop: two columns, each with its screenshots */
+.modes,
+.ways {
+  padding: 56px 0 0;
+}
+
+.intro {
+  max-width: 720px;
+  color: var(--muted);
+  margin: 0 0 28px;
+}
+
+.mode h3 {
+  font-size: 24px;
+}
+
+.mode h3 code {
+  font-size: 0.8em;
+}
+
+.modes .feature.wide {
+  margin-bottom: 56px;
+}
+
+.where {
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.mode ul {
+  padding-left: 1.2em;
+  margin: 0 0 20px;
+  font-size: 15.5px;
+  color: var(--muted);
+}
+
+.mode li {
+  margin-bottom: 6px;
+}
+
+figure {
+  margin: 0;
+}
+
+figure img {
+  display: block;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+figcaption {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* four ways in */
+.table {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+td:first-child {
+  white-space: nowrap;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 15.5px;
+  max-width: 820px;
+}
+
+.hero > img {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
 /* where a screenshot will go: a dashed box with its caption */
 .hero .also {
   max-width: 760px;
@@ -289,6 +395,50 @@ footer {
 
 .also p:last-child {
   margin-bottom: 0;
+}
+
+/* grid items no wider than their column: long lines in pre scroll instead */
+.feature.wide > *,
+.platform {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  /* the table as one block per row, each value with its column's name */
+  table,
+  tbody,
+  tr,
+  td {
+    display: block;
+  }
+
+  thead {
+    display: none;
+  }
+
+  tr {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  td {
+    border: 0;
+    padding: 3px 0;
+  }
+
+  td::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 6.5em;
+    color: var(--muted);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  td:first-child::before {
+    content: none;
+  }
 }
 
 @media (max-width: 760px) {

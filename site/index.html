@@ -12,9 +12,9 @@
 <header class="top">
   <a class="brand" href="#"><img src="images/logo.svg" alt="" width="28" height="28">nqv</a>
   <nav>
-    <a href="#terminal">Terminal</a>
-    <a href="#desktop">Desktop</a>
-    <a href="#command-line">Command line</a>
+    <a href="#modes">Terminal or desktop</a>
+    <a href="#ways">Four ways in</a>
+    <a href="#features">Features</a>
     <a href="#download">Download</a>
     <a href="https://github.com/mathesislab/nqv">Source</a>
   </nav>
@@ -23,55 +23,126 @@
 <main>
 <section class="hero">
   <h1>Look at model output where it is</h1>
-  <p class="lead">nqv shows the maps and series of NetCDF files, fast, in any terminal over plain ssh, or in a
+  <p class="lead">nqv shows the maps and series of NetCDF files, fast: in any terminal over plain ssh, or in a
     desktop window that reads the files on the cluster. Step through time, click a cell for its series, mask,
     contour, compare two runs; whatever you see can be repeated as one command line or saved as a PNG.</p>
   <p class="actions">
-    <a class="button primary" href="https://github.com/mathesislab/nqv/releases/latest/download/nqv-desktop-macos-aarch64.dmg">Download for Mac</a>
-    <a class="button" href="#download">Linux and HPC</a>
+    <a class="button primary" href="#download">Download</a>
+    <a class="button" href="#modes">Terminal or desktop?</a>
     <a class="button" href="https://github.com/mathesislab/nqv">View source</a>
   </p>
-  <p class="more">Desktop app for macOS (Apple silicon) and Linux; terminal viewer for Linux (x86-64, ARM) and
-    macOS. <a href="https://github.com/mathesislab/nqv/releases">All releases</a></p>
-
-  <img src="images/desktop.png" alt="The desktop app on Linux: ice surface velocity of a CLIMBER-X run on a log scale, masked outside the ice, with surface elevation contours" width="1280" height="860">
+  <img src="images/desktop.png" alt="The desktop app on Linux showing ice surface velocity of a CLIMBER-X run on a log scale, masked outside the ice, with surface elevation contours; the data is read on the cluster" width="1280" height="860">
 </section>
 
-<section class="features">
-  <article id="terminal" class="feature wide">
+<section id="modes" class="modes">
+  <h2>Terminal or desktop</h2>
+  <p class="intro">One viewer with two faces. Both have the same keys, <code>:</code> commands and command-line
+    options; <code>p</code> in either prints the command for the view you have.</p>
+
+  <article class="mode feature wide">
     <div>
-      <h2>In any terminal, over ssh</h2>
-      <p><code>nqv run/</code> on the login node opens the folder's files: arrows step through time and levels,
-        <code>v</code> picks a variable by a few letters, a click gives a cell's value and its series. Maps are drawn
-        with the terminal's image protocol where there is one (kitty, iTerm2, WezTerm, sixel), else with coloured
-        half-blocks, so it works in Terminal.app and under tmux.</p>
-      <p>One static binary, no libraries to load: copy it to <code>~/bin</code>. Files are read a slice at a
-        time, only as much as the screen shows.</p>
+      <h3>Terminal viewer <code>nqv</code></h3>
+      <p class="where">Runs where the data is: in your ssh session on the login node.</p>
+      <ul>
+        <li>One static binary for Linux (x86-64, ARM) and macOS. Copy it to <code>~/bin</code>; nothing to load.</li>
+        <li>Arrows step through time and levels, <code>v</code> picks a variable by a few letters, a click gives a
+          cell's value and series; statistics at the side.</li>
+        <li>Full pixels in terminals with an image protocol: kitty, Ghostty, WezTerm, iTerm2, and sixel ones.
+          Coloured half-blocks everywhere else, including Terminal.app, GNOME Terminal and tmux:</li>
+      </ul>
+      <div class="pair">
+        <figure>
+          <img src="images/detail-pixels.png" alt="Close-up of the map in a terminal with sixel graphics: smooth velocity field and thin contour lines" loading="lazy" width="390" height="260">
+          <figcaption>pixels</figcaption>
+        </figure>
+        <figure>
+          <img src="images/detail-blocks.png" alt="The same close-up with half-block characters: coarse coloured cells, contours as braille dots" loading="lazy" width="390" height="260">
+          <figcaption>half-blocks</figcaption>
+        </figure>
+      </div>
     </div>
-    <img src="images/terminal.png" alt="The terminal viewer in an xterm: the same map in coloured half-blocks, contours as braille dots, statistics at the side" loading="lazy" width="1348" height="873">
+    <figure>
+      <img src="images/terminal-pixels.png" alt="The terminal viewer in an xterm with sixel graphics: ice surface velocity, masked outside the ice, with elevation contours, statistics at the side and the status line below" loading="lazy" width="1330" height="873">
+      <figcaption>The terminal viewer in xterm, with sixel graphics</figcaption>
+    </figure>
   </article>
 
-  <article id="desktop" class="feature wide reverse">
+  <article class="mode feature wide reverse">
     <div>
-      <h2>A window on files anywhere</h2>
-      <p>The desktop app draws maps at the screen's full resolution: the wheel zooms around the pointer, a drag
-        pans, a click shows the series below the map. Open local files, or <code>albedo0:/path/to/run</code>: nqv
-        starts itself on the host over ssh and only screen-sized maps cross the network, so a 100 MB file opens in
-        seconds.</p>
-      <p>Already on the cluster? <code>nqv -g file.nc</code> in your ssh session opens the view in the app on
-        your laptop, through a socket ssh forwards. The terminal viewer reads remote files too, with
-        <code>nqv HOST:PATH</code>.</p>
+      <h3>Desktop app</h3>
+      <p class="where">Runs on your laptop (macOS, Linux); reads files there or on a cluster.</p>
+      <ul>
+        <li>Maps at the screen's full resolution, drawn by the graphics card: changing colours or range is
+          instant.</li>
+        <li>The wheel zooms around the pointer, a drag pans, a click shows the cell's series below the map; a
+          toolbar for colour map, range, smoothing and comparison, a list of variables at the side.</li>
+        <li>Open local files, or <code>albedo0:/path/to/run</code>; or send a view from the cluster with
+          <code>nqv -g</code>. Each view has a window of its own.</li>
+      </ul>
+    </div>
+    <figure>
+      <img src="images/desktop.png" alt="The desktop app showing the same view, handed over from albedo0 with nqv -g" loading="lazy" width="1280" height="860">
+      <figcaption>The same view, sent from the cluster with <code>nqv -g</code></figcaption>
+    </figure>
+  </article>
+</section>
+
+<section id="ways" class="ways">
+  <h2>Four ways in</h2>
+  <p class="intro">Wherever you start, the data is read where it lies and only screen-sized maps travel: a 100 MB
+    file opens in seconds over ssh.</p>
+  <div class="table">
+    <table>
+      <thead>
+        <tr><th>You type</th><th>Where</th><th>Drawn</th><th>Data read</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td data-label="You type"><code>nqv run/</code></td>
+          <td data-label="Where">ssh session on the cluster</td>
+          <td data-label="Drawn">that terminal</td>
+          <td data-label="Data read">on the cluster</td>
+        </tr>
+        <tr>
+          <td data-label="You type"><code>nqv -g run/</code></td>
+          <td data-label="Where">ssh session on the cluster</td>
+          <td data-label="Drawn">the desktop app on your laptop</td>
+          <td data-label="Data read">on the cluster</td>
+        </tr>
+        <tr>
+          <td data-label="You type"><code>nqv albedo0:/path/run/</code></td>
+          <td data-label="Where">terminal on your laptop</td>
+          <td data-label="Drawn">that terminal</td>
+          <td data-label="Data read">on the cluster, by <code>nqv</code> started over ssh</td>
+        </tr>
+        <tr>
+          <td data-label="You type">Open… <code>albedo0:/path/run/</code></td>
+          <td data-label="Where">the desktop app</td>
+          <td data-label="Drawn">its window</td>
+          <td data-label="Data read">on the cluster, by <code>nqv</code> started over ssh</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><code>nqv -g</code> reaches the app through a socket that ssh forwards: one line in
+    <code>~/.ssh/config</code> on your laptop, which <code>nqv -g</code> prints for you
+    (<a href="https://github.com/mathesislab/nqv#from-a-cluster-to-the-desktop-app">details</a>). Without it, or
+    without the app running, it draws in the terminal.</p>
+</section>
+
+<section id="features" class="features">
+  <article id="command-line" class="feature wide">
+    <div>
+      <h2>Everything on the command line</h2>
+      <p>Every setting is a flag and a <code>:</code> command, and <code>p</code> prints the command line of the
+        view you have. <code>--png</code> writes the view to a file without opening anything, for scripts and
+        notebooks:</p>
+      <pre><code>nqv run/ice_NH-16KM.nc -v uxy_s \
+  --mask "f_ice &lt; 0.5" \
+  --contour "z_srf step=500" \
+  --range log,1,3000 --png velocity.png</code></pre>
     </div>
     <img src="images/png.png" alt="A PNG written by nqv --png: the map with axes, colour bar, contour labels" loading="lazy" width="780" height="800">
-  </article>
-
-  <article id="command-line" class="feature">
-    <h2>Everything on the command line</h2>
-    <p>Every setting is a flag and a <code>:</code> command, and <code>p</code> prints the command line of the
-      view you have. <code>--png</code> writes the view to a file without opening anything, for scripts and
-      notebooks:</p>
-    <pre><code>nqv run/ice_NH-16KM.nc -v uxy_s --mask "f_ice &lt; 0.5" \
-    --contour "z_srf step=500" --range log,1,3000 --png velocity.png</code></pre>
   </article>
 
   <div class="grid">
@@ -141,8 +212,8 @@ chmod +x ~/bin/nqv</code></pre>
       <p>On a Mac, <code>nqv-macos-aarch64</code> the same way.</p>
     </article>
   </div>
-  <p class="more">Opening files on a host needs ssh to log in without a prompt (a key in ssh-agent) and nqv on the
-    host, of the same version. The desktop app updates itself when you ask. All versions are on the
+  <p class="more">Files on a cluster need ssh to log in without a prompt (a key in ssh-agent) and nqv there, of
+    the same version as on your laptop. The desktop app updates itself when you ask. All versions are on the
     <a href="https://github.com/mathesislab/nqv/releases">releases page</a>; to build it yourself, see the
     <a href="https://github.com/mathesislab/nqv#readme">README</a>.</p>
 </section>
