@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use nqv_core::{
-    ContourLine, ContourSpec, DirEntry, Mask, RangeEstimate, Raster, Series, SeriesSpec, Show,
-    Stats, VarInfo, VarRef, ViewSpec,
+    ContourLine, ContourSpec, DirEntry, Mask, Projection, RangeEstimate, Raster, Series,
+    SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
 };
 use nqv_session::{Backend, CatalogInfo, Files, MapParts, OpenMode};
 
@@ -317,6 +317,16 @@ impl Backend for Remote {
             contour: contour.cloned(),
         };
         expect!(self.call(req)?, Response::Done => ())
+    }
+
+    fn bounds(&self, var: &VarRef, proj: &Projection) -> Result<[f64; 4]> {
+        let req = Request::Bounds(var.clone(), proj.clone());
+        expect!(self.call(req)?, Response::Bounds(b) => b)
+    }
+
+    fn lonlat(&self, var: &VarRef, cell: (usize, usize)) -> Option<(f64, f64)> {
+        let r = self.call(Request::LonLat(var.clone(), cell)).ok()?;
+        expect!(r, Response::LonLat(p) => p).ok().flatten()
     }
 
     fn map_data(

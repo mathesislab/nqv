@@ -82,6 +82,8 @@ fn answer(local: &mut Option<Local>, req: Request) -> Response {
             .value(&var, &index, &mask)
             .map_or_else(err, Response::Value),
         Request::Coord { source, dim } => Response::Coord(b.coord(source, &dim)),
+        Request::Bounds(var, proj) => b.bounds(&var, &proj).map_or_else(err, Response::Bounds),
+        Request::LonLat(var, cell) => Response::LonLat(b.lonlat(&var, cell)),
         Request::CheckOverlay { var, mask, contour } => b
             .check_overlay(&var, &mask, contour.as_ref())
             .map_or_else(err, |_| Response::Done),

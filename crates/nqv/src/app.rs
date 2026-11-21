@@ -452,8 +452,10 @@ impl App {
             }
             Output::Blocks { .. } => (area.width as u32, area.height as u32 * 2),
         };
-        let (ny, nx) = self.s.map_extent().unwrap_or((ny, nx));
-        let size = fit_size(nx, ny, max_w, max_h);
+        let size = self
+            .s
+            .map_size(max_w, max_h)
+            .unwrap_or_else(|| fit_size(nx, ny, max_w, max_h));
         // Room for the statistics: beside the map when it leaves room, else one line below.
         let (cols, rows) = match out {
             Output::Blocks { .. } => (size.0 as u16, size.1.div_ceil(2) as u16),

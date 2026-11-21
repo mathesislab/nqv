@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use nqv_core::{
-    Cond, ContourLine, ContourSpec, Interp, Kind, Mask, RangeEstimate, Raster, Region, Series,
-    SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
+    Cond, ContourLine, ContourSpec, Graticule, Interp, Kind, Mask, Projection, RangeEstimate,
+    Raster, Region, Series, SeriesSpec, Show, Stats, Target, VarInfo, VarRef, ViewSpec, fit_size,
 };
 use nqv_render::{CMAPS, Norm, cmap_index};
 
@@ -67,6 +67,8 @@ pub struct SeriesData {
 pub struct Probe {
     pub cell: (usize, usize),
     pub coords: (Option<f32>, Option<f32>),
+    /// Its longitude and latitude, where the grid's geography is known.
+    pub lonlat: Option<(f64, f64)>,
     /// The value, or why there is none ("masked", a read error).
     pub value: Result<f32, String>,
 }
@@ -87,8 +89,11 @@ pub struct Session {
     pub contour: Option<ContourCmd>,
     /// Clicked map cell (y, x).
     pub probe: Option<(usize, usize)>,
-    /// Part of the map shown; None for all of it.
+    /// Part of the map shown (on its own grid); None for all of it.
     pub region: Option<Region>,
+    /// Maps in this projection, this part of it (then `region` is None); None: on
+    /// their own grid.
+    pub target: Option<Target>,
 }
 
 impl Session {
@@ -121,6 +126,7 @@ impl Session {
             contour: None,
             probe: None,
             region: None,
+            target: None,
         };
         s.reset()?;
         Ok(s)
@@ -197,9 +203,157 @@ impl Session {
         })
     }
 
-    /// Zoom to a window of the map, or show all of it.
-    pub fn zoom(&mut self, region: Option<Region>) {
-        self.region = region;
+    /// The size of the map drawn in at most `max_w` by `max_h` pixels: the aspect of
+    /// the cells shown, or of the part of the projection shown.
+    pub fn map_size(&self, max_w: u32, max_h: u32) -> Option<(u32, u32)> {
+        if let Some(t) = &self.target {
+            let [x0, x1, y0, y1] = t.bounds;
+            let (w, h) = (x1 - x0, y1 - y0);
+            let k = 1e6 / w.max(h);
+            return Some(fit_size(
+                (w * k).round().max(1.0) as usize,
+                (h * k).round().max(1.0) as usize,
+                max_w,
+                max_h,
+            ));
+        }
+        let (ny, nx) = self.map_extent()?;
+        Some(fit_size(nx, ny, max_w, max_h))
+    }
+
+    /// Show maps in `proj`, at first around the current map; or on their own grid.
+    pub fn set_proj(&mut self, proj: Option<Projection>) -> Result<(), String> {
+        let Some(proj) = proj else {
+            self.target = None;
+            return Ok(());
+        };
+        let v = self.var_info();
+        if !matches!(v.kind(), Kind::Map { .. }) {
+            return Err(format!("proj: {} is not a map", v.name));
+        }
+        let bounds = self
+            .backend
+            .bounds(&self.var, &proj)
+            .map_err(|e| format!("proj: {e:#}"))?;
+        self.target = Some(Target { proj, bounds });
+        self.region = None;
+        Ok(())
+    }
+
+    /// The whole map again: all its cells, or the projection's first view of it.
+    pub fn whole_map(&mut self) {
+        self.region = None;
+        if let Some(t) = &self.target
+            && let Ok(b) = self.backend.bounds(&self.var, &t.proj)
+        {
+            self.target = Some(Target {
+                proj: t.proj.clone(),
+                bounds: b,
+            });
+        }
+    }
+
+    /// Zoom by `factor` (< 1 in, > 1 out) around pixel (`px`, `py`) of the map `spec`,
+    /// keeping what is under the pointer there; the whole map again when zooming out
+    /// past it.
+    pub fn zoom_at(&mut self, spec: &ViewSpec, px: u32, py: u32, factor: f64) {
+        if let Some(t) = &spec.proj {
+            let (w, h) = (spec.size.0.max(1), spec.size.1.max(1));
+            let (cx, cy) = t.at(px as f64, py as f64, w, h);
+            let [x0, x1, y0, y1] = t.bounds;
+            let b = [
+                cx - (cx - x0) * factor,
+                cx + (x1 - cx) * factor,
+                cy - (cy - y0) * factor,
+                cy + (y1 - cy) * factor,
+            ];
+            let whole = self.backend.bounds(&self.var, &t.proj).ok();
+            match whole {
+                Some(wb) if factor > 1.0 && b[1] - b[0] >= wb[1] - wb[0] => self.whole_map(),
+                _ => {
+                    self.target = Some(Target {
+                        proj: t.proj.clone(),
+                        bounds: b,
+                    })
+                }
+            }
+            return;
+        }
+        let (Some(win), Some((cy, cx))) = (self.window(spec), self.cell_at(spec, (px, py))) else {
+            return;
+        };
+        let v = self.var_info();
+        let Kind::Map { y, x } = v.kind() else { return };
+        let (ny, nx) = (v.dims[y].len, v.dims[x].len);
+        // The cell under the pointer stays where it is.
+        let scale = |lo: usize, hi: usize, c: usize, n: usize| -> (usize, usize) {
+            let len = (((hi - lo) as f64 * factor).round() as usize).clamp(2.min(n), n);
+            let frac = (c - lo) as f64 / (hi - lo) as f64;
+            let start = (c as f64 - frac * len as f64).round().max(0.0) as usize;
+            let start = start.min(n - len);
+            (start, start + len)
+        };
+        let (y0, y1) = scale(win.y0, win.y1, cy.clamp(win.y0, win.y1 - 1), ny);
+        let (x0, x1) = scale(win.x0, win.x1, cx.clamp(win.x0, win.x1 - 1), nx);
+        let whole = y0 == 0 && x0 == 0 && y1 == ny && x1 == nx;
+        self.region = (!whole).then_some(Region { y0, y1, x0, x1 });
+    }
+
+    /// Move the map `spec` by a drag of (`dx`, `dy`) pixels: the content follows the
+    /// pointer. On its own grid only when zoomed in.
+    pub fn pan(&mut self, spec: &ViewSpec, dx: i64, dy: i64) {
+        let (w, h) = (spec.size.0.max(1), spec.size.1.max(1));
+        if let Some(t) = &spec.proj {
+            let [x0, x1, y0, y1] = t.bounds;
+            let (sx, sy) = (
+                -(dx as f64) * (x1 - x0) / w as f64,
+                dy as f64 * (y1 - y0) / h as f64,
+            );
+            self.target = Some(Target {
+                proj: t.proj.clone(),
+                bounds: [x0 + sx, x1 + sx, y0 + sy, y1 + sy],
+            });
+            return;
+        }
+        let Some(win) = spec.region else { return };
+        // Whether rows go down the screen as their index grows (depends on the y order).
+        let (Some(top), Some(bottom)) =
+            (self.cell_at(spec, (0, 0)), self.cell_at(spec, (0, h - 1)))
+        else {
+            return;
+        };
+        let down = if bottom.0 >= top.0 { 1.0 } else { -1.0 };
+        let v = self.var_info();
+        let Kind::Map { y, x } = v.kind() else { return };
+        let shift = |lo: usize, hi: usize, cells: f64, n: usize| -> (usize, usize) {
+            let len = (hi - lo) as i64;
+            let start = (lo as i64 + cells.round() as i64).clamp(0, n as i64 - len);
+            (start as usize, (start + len) as usize)
+        };
+        let per_x = (win.x1 - win.x0) as f64 / w as f64;
+        let per_y = (win.y1 - win.y0) as f64 / h as f64;
+        let (x0, x1) = shift(win.x0, win.x1, -(dx as f64) * per_x, v.dims[x].len);
+        let (y0, y1) = shift(win.y0, win.y1, -(dy as f64) * per_y * down, v.dims[y].len);
+        self.region = Some(Region { y0, y1, x0, x1 });
+    }
+
+    /// The cells of map `spec` on its own grid: its region, or all of it.
+    fn window(&self, spec: &ViewSpec) -> Option<Region> {
+        let v = self.var_info();
+        let Kind::Map { y, x } = v.kind() else {
+            return None;
+        };
+        Some(spec.region.unwrap_or(Region {
+            y0: 0,
+            y1: v.dims[y].len,
+            x0: 0,
+            x1: v.dims[x].len,
+        }))
+    }
+
+    /// Meridians and parallels over a projected map of `size` pixels.
+    pub fn graticule(&self, size: (u32, u32)) -> Option<Graticule> {
+        self.target.as_ref().map(|t| nqv_core::graticule(t, size))
     }
 
     /// Dimension of the series shown for a clicked cell: the one stepped first.
@@ -404,6 +558,7 @@ impl Session {
             }
             Command::Contour(c) => self.contour = c,
             Command::Zoom(z) => self.set_zoom(z)?,
+            Command::Proj(p) => self.set_proj(p)?,
             Command::Recipe(name) => {
                 for c in self.recipe(&name)? {
                     self.apply(c)?;
@@ -497,12 +652,19 @@ impl Session {
         Ok(())
     }
 
-    /// Zoom to ranges along the map dimensions (missing ones span the whole map).
+    /// Zoom to ranges along the map dimensions (missing ones span the whole map); in a
+    /// projected view, to x/y ranges (km; degrees in lat-lon) or a longitude-latitude
+    /// box.
     fn set_zoom(&mut self, z: Option<Vec<ZoomRange>>) -> Result<(), String> {
         let Some(ranges) = z else {
-            self.region = None;
+            self.whole_map();
             return Ok(());
         };
+        if let Some(t) = self.target.clone() {
+            let bounds = zoom_bounds(&t, &ranges)?;
+            self.target = Some(Target { bounds, ..t });
+            return Ok(());
+        }
         let v = self.var_info();
         let Kind::Map { y, x } = v.kind() else {
             return Err(format!("zoom: {} is not a map", v.name));
@@ -621,8 +783,12 @@ impl Session {
             size,
             mask: self.overlays().mask,
             interp: self.interp,
-            region: self.region,
-            proj: None,
+            region: if self.target.is_some() {
+                None
+            } else {
+                self.region
+            },
+            proj: self.target.clone(),
         }
     }
 
@@ -635,8 +801,12 @@ impl Session {
             size,
             mask: o.mask,
             interp: self.interp,
-            region: self.region,
-            proj: None,
+            region: if self.target.is_some() {
+                None
+            } else {
+                self.region
+            },
+            proj: self.target.clone(),
         };
         let p = self
             .backend
@@ -716,6 +886,7 @@ impl Session {
         Some(Probe {
             cell,
             coords: (self.coord_at(y, cell.0), self.coord_at(x, cell.1)),
+            lonlat: self.backend.lonlat(&self.var, cell),
             value: self.value_at(&self.index_at(cell)),
         })
     }
@@ -787,7 +958,15 @@ impl Session {
         if self.interp == Interp::Bilinear {
             add("interp", "bilinear".into(), "--interp", "bilinear".into());
         }
-        if let (Some(r), Kind::Map { y, x }) = (self.region, v.kind()) {
+        if let Some(t) = &self.target {
+            add("proj", t.proj.text(), "--proj", t.proj.text());
+            let first = self.backend.bounds(&self.var, &t.proj).ok();
+            if first.is_none_or(|b| b != t.bounds) {
+                let z = zoom_text(t);
+                add("zoom", z.clone(), "--zoom", z);
+            }
+        }
+        if let (Some(r), Kind::Map { y, x }, None) = (self.region, v.kind(), &self.target) {
             let z = format!(
                 "{}=@{}:@{} {}=@{}:@{}",
                 v.dims[y].name,
@@ -901,4 +1080,84 @@ pub fn filtered_vars<'a>(info: &'a CatalogInfo, query: &str) -> Vec<(VarRef, &'a
         .collect();
     hits.sort_by_key(|h| (h.0, h.1));
     hits.into_iter().map(|h| h.2).collect()
+}
+
+/// The bounds a projected view's zoom ranges give: `x=A:B`, `y=C:D` in km (degrees in
+/// lat-lon), the others kept; or a box `lon=A:B lat=C:D`, its outline projected.
+fn zoom_bounds(t: &Target, ranges: &[ZoomRange]) -> Result<[f64; 4], String> {
+    let unit = if t.proj == Projection::LatLon {
+        1.0
+    } else {
+        1000.0
+    };
+    let mut b = t.bounds;
+    let (mut lon, mut lat) = (None, None);
+    for (dim, a, z) in ranges {
+        let value = |p: &TimeSel| match *p {
+            TimeSel::Value(v) => Ok(v),
+            TimeSel::Index(_) => Err(format!("zoom: {dim}: values here, not @indices")),
+        };
+        let (a, z) = (value(a)?, value(z)?);
+        let (lo, hi) = (a.min(z), a.max(z));
+        match dim.as_str() {
+            "x" => (b[0], b[1]) = (lo * unit, hi * unit),
+            "y" => (b[2], b[3]) = (lo * unit, hi * unit),
+            "lon" => lon = Some((lo, hi)),
+            "lat" => lat = Some((lo, hi)),
+            _ => {
+                return Err(format!(
+                    "zoom: '{dim}': in a projected view, x=A:B y=C:D ({}) or lon=A:B lat=C:D",
+                    if unit == 1.0 { "degrees" } else { "km" }
+                ));
+            }
+        }
+    }
+    if lon.is_some() || lat.is_some() {
+        let (lon, lat) = (lon.unwrap_or((-180.0, 180.0)), lat.unwrap_or((-90.0, 90.0)));
+        const N: usize = 64;
+        let mut bb = [
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for k in 0..=N {
+            let f = k as f64 / N as f64;
+            let lo = lon.0 + f * (lon.1 - lon.0);
+            let la = lat.0 + f * (lat.1 - lat.0);
+            for (x, y) in [(lo, lat.0), (lo, lat.1), (lon.0, la), (lon.1, la)] {
+                if let Some((px, py)) = t.proj.forward(x, y) {
+                    bb = [bb[0].min(px), bb[1].max(px), bb[2].min(py), bb[3].max(py)];
+                }
+            }
+        }
+        if !bb[0].is_finite() {
+            return Err("zoom: that box is not in view in this projection".into());
+        }
+        b = bb;
+    }
+    if !(b[0] < b[1] && b[2] < b[3]) {
+        return Err("zoom: an empty range".into());
+    }
+    Ok(b)
+}
+
+/// The `zoom` argument giving a projected view's bounds (km; degrees in lat-lon).
+fn zoom_text(t: &Target) -> String {
+    let unit = if t.proj == Projection::LatLon {
+        1.0
+    } else {
+        1000.0
+    };
+    let n = |v: f64| {
+        let s = format!("{:.3}", v / unit);
+        let s = s.trim_end_matches('0').trim_end_matches('.');
+        if s == "-0" {
+            "0".to_string()
+        } else {
+            s.to_string()
+        }
+    };
+    let [x0, x1, y0, y1] = t.bounds;
+    format!("x={}:{} y={}:{}", n(x0), n(x1), n(y0), n(y1))
 }

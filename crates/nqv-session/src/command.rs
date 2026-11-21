@@ -2,7 +2,7 @@
 //! same function (`COMMANDS` lists the pairs), so both share one vocabulary and
 //! everything shown in the viewer can be reproduced from the command line.
 
-use nqv_core::{Interp, Levels, Op, Show};
+use nqv_core::{Interp, Levels, Op, Projection, Show};
 use serde::{Deserialize, Serialize};
 
 /// Each `:` command with its flag and what it does, for help screens.
@@ -38,9 +38,14 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "hide where all conditions hold; OP = != < <= > >=",
     ),
     (
+        "proj SPEC | native",
+        "--proj SPEC",
+        "maps in a projection: latlon, stere north|south, laea north|south, laea LON,LAT, ortho LON,LAT",
+    ),
+    (
         "zoom DIM=A:B [DIM=A:B] | off",
         "--zoom \"...\"",
-        "part of the map: a range per map dimension (values or @indices)",
+        "part of the map: a range per map dimension (values or @indices); projected: x=A:B y=C:D (km) or lon=A:B lat=C:D",
     ),
     (
         "contour VAR [step=S | n=N | levels=A,B,..] | off",
@@ -106,6 +111,8 @@ pub enum Command {
     Contour(Option<ContourCmd>),
     /// Part of the map shown: a range of positions per map dimension; None shows all.
     Zoom(Option<Vec<ZoomRange>>),
+    /// Maps in this projection; None: on their own grid.
+    Proj(Option<Projection>),
     /// Apply the recipe of this name (or path).
     Recipe(String),
     /// Save the current settings as a recipe of this name.
@@ -159,7 +166,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | zoom DIM=A:B ..|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | zoom DIM=A:B ..|off | proj SPEC|native | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -173,6 +180,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "mask" => parse_mask(arg).map(Command::Mask),
         "contour" => parse_contour(arg).map(Command::Contour),
         "zoom" => parse_zoom(arg).map(Command::Zoom),
+        "proj" => parse_proj(arg).map(Command::Proj),
         "recipe" if !arg.is_empty() => Ok(Command::Recipe(arg.to_string())),
         "save" if !arg.is_empty() => Ok(Command::Save(arg.to_string())),
         "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),
@@ -233,6 +241,16 @@ pub fn parse_range(arg: &str) -> Result<RangeMode, String> {
 
 /// A range along one map dimension: its name and the two ends.
 pub type ZoomRange = (String, TimeSel, TimeSel);
+
+/// `native` (or `off`): maps on their own grid; else a projection (`Projection::parse`).
+pub fn parse_proj(arg: &str) -> Result<Option<Projection>, String> {
+    match arg.trim() {
+        "native" | "off" | "none" => Ok(None),
+        a => Projection::parse(a)
+            .map(Some)
+            .map_err(|e| format!("proj: {e}")),
+    }
+}
 
 /// `off`, or `DIM=A:B` per map dimension, each end a value or @index:
 /// `lat=60:90 lon=-80:-10`, `yc=@100:@300`.

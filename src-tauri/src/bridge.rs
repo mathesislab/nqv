@@ -274,10 +274,9 @@ pub struct StatsView {
 /// values as little-endian f32 (NaN missing), row 0 at the top. Also returns the view,
 /// for clicks, zoom and pan on it.
 pub fn map(s: &Session, w: u32, h: u32) -> Result<(Vec<u8>, ViewSpec)> {
-    let Some((ny, nx)) = s.map_extent() else {
+    let Some(size) = s.map_size(w.max(16), h.max(16)) else {
         bail!("{} is not a map", s.var_info().name);
     };
-    let size = nqv_core::fit_size(nx, ny, w.max(16), h.max(16));
     let m = s.map(size, true)?;
     let norm = m.norm;
     let header = MapHeader {
@@ -382,67 +381,6 @@ pub fn probe(s: &mut Session, spec: &ViewSpec, px: u32, py: u32) {
     }
 }
 
-/// The window shown by `spec` (the whole map without a zoom).
-fn current_window(s: &Session, spec: &ViewSpec) -> Option<Region> {
-    let v = s.var_info();
-    let Kind::Map { y, x } = v.kind() else {
-        return None;
-    };
-    Some(spec.region.unwrap_or(Region {
-        y0: 0,
-        y1: v.dims[y].len,
-        x0: 0,
-        x1: v.dims[x].len,
-    }))
-}
-
-/// Zoom by `factor` (< 1 in, > 1 out) around pixel (`px`, `py`) of the map `spec`; the
-/// whole map again when zooming out past it.
-pub fn zoom_at(s: &mut Session, spec: &ViewSpec, px: u32, py: u32, factor: f64) {
-    let (Some(win), Some((cy, cx))) = (current_window(s, spec), s.cell_at(spec, (px, py))) else {
-        return;
-    };
-    let v = s.var_info();
-    let Kind::Map { y, x } = v.kind() else { return };
-    let (ny, nx) = (v.dims[y].len, v.dims[x].len);
-    // The cell under the pointer stays where it is.
-    let scale = |lo: usize, hi: usize, c: usize, n: usize| -> (usize, usize) {
-        let len = (((hi - lo) as f64 * factor).round() as usize).clamp(2.min(n), n);
-        let frac = (c - lo) as f64 / (hi - lo) as f64;
-        let start = (c as f64 - frac * len as f64).round().max(0.0) as usize;
-        let start = start.min(n - len);
-        (start, start + len)
-    };
-    let (y0, y1) = scale(win.y0, win.y1, cy.clamp(win.y0, win.y1 - 1), ny);
-    let (x0, x1) = scale(win.x0, win.x1, cx.clamp(win.x0, win.x1 - 1), nx);
-    let whole = y0 == 0 && x0 == 0 && y1 == ny && x1 == nx;
-    s.zoom((!whole).then_some(Region { y0, y1, x0, x1 }));
-}
-
-/// Move a zoomed map by a drag of (`dx`, `dy`) pixels on the map `spec`: the content
-/// follows the pointer, at the map's cells per pixel.
-pub fn pan(s: &mut Session, spec: &ViewSpec, dx: i64, dy: i64) {
-    let Some(win) = spec.region else { return };
-    let (w, h) = (spec.size.0.max(1), spec.size.1.max(1));
-    // Whether rows go down the screen as their index grows (depends on the y order).
-    let (Some(top), Some(bottom)) = (s.cell_at(spec, (0, 0)), s.cell_at(spec, (0, h - 1))) else {
-        return;
-    };
-    let down = if bottom.0 >= top.0 { 1.0 } else { -1.0 };
-    let v = s.var_info();
-    let Kind::Map { y, x } = v.kind() else { return };
-    let shift = |lo: usize, hi: usize, cells: f64, n: usize| -> (usize, usize) {
-        let len = (hi - lo) as i64;
-        let start = (lo as i64 + cells.round() as i64).clamp(0, n as i64 - len);
-        (start as usize, (start + len) as usize)
-    };
-    let per_x = (win.x1 - win.x0) as f64 / w as f64;
-    let per_y = (win.y1 - win.y0) as f64 / h as f64;
-    let (x0, x1) = shift(win.x0, win.x1, -(dx as f64) * per_x, v.dims[x].len);
-    let (y0, y1) = shift(win.y0, win.y1, -(dy as f64) * per_y * down, v.dims[y].len);
-    s.zoom(Some(Region { y0, y1, x0, x1 }));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,15 +425,15 @@ mod tests {
     fn zoom_and_pan_from_pixels() {
         let mut s = small();
         let (_, spec) = map(&s, 80, 60).unwrap();
-        zoom_at(&mut s, &spec, 40, 30, 0.5);
+        s.zoom_at(&spec, 40, 30, 0.5);
         let r = s.region.expect("zoomed in");
         assert_eq!((r.y1 - r.y0, r.x1 - r.x0), (3, 4));
         let (_, spec) = map(&s, 80, 60).unwrap();
-        pan(&mut s, &spec, -1000, 0);
+        s.pan(&spec, -1000, 0);
         let p = s.region.unwrap();
         assert_eq!((p.x1, p.y0), (8, r.y0)); // dragged left: shows the right edge
         let (_, spec) = map(&s, 80, 60).unwrap();
-        zoom_at(&mut s, &spec, 10, 10, 4.0);
+        s.zoom_at(&spec, 10, 10, 4.0);
         assert!(s.region.is_none(), "zoomed out past the map");
     }
 

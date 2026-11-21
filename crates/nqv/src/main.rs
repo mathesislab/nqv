@@ -114,6 +114,15 @@ struct Args {
     #[arg(long, value_name = "diff|a|b", help_heading = "View")]
     show: Option<String>,
 
+    /// Maps in a projection: latlon, "stere north|south [lon0=L] [lat_ts=T]",
+    /// "laea north|south", "laea LON,LAT", "ortho LON,LAT" (native: on their own grid)
+    #[arg(
+        long,
+        value_name = "SPEC",
+        allow_hyphen_values = true,
+        help_heading = "Display"
+    )]
+    proj: Option<String>,
     /// Colour range: MIN,MAX, auto or sym (symmetric around 0)
     #[arg(
         long,
@@ -381,6 +390,9 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
     }
     if let Some(c) = &args.contour {
         cmds.push(Command::Contour(command::parse_contour(c)?));
+    }
+    if let Some(p) = &args.proj {
+        cmds.push(Command::Proj(command::parse_proj(p)?));
     }
     if let Some(z) = &args.zoom {
         cmds.push(Command::Zoom(command::parse_zoom(z)?));

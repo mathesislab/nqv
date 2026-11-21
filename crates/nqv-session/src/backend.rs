@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use nqv_core::{
-    Catalog, ContourLine, ContourSpec, DimInfo, DirEntry, Mask, NetcdfReader, RangeEstimate,
-    Raster, Reader, Series, SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec, cell_at,
-    check_contour, check_mask, contours, list_dir, masked, range, series, series_range, stats,
-    value, view,
+    Catalog, ContourLine, ContourSpec, DimInfo, DirEntry, Mask, NetcdfReader, Projection,
+    RangeEstimate, Raster, Reader, Series, SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
+    cell_at, check_contour, check_mask, contours, default_bounds, list_dir, lonlat, masked, range,
+    series, series_range, stats, value, view,
 };
 
 /// How paths are opened (the command-line options that decide it).
@@ -165,6 +165,10 @@ pub trait Backend: Files + Send {
     /// Whether `mask` and contours can be drawn over `var`.
     fn check_overlay(&self, var: &VarRef, mask: &Mask, contour: Option<&ContourSpec>)
     -> Result<()>;
+    /// The part of `proj` to show map `var` in at first (`nqv_core::default_bounds`).
+    fn bounds(&self, var: &VarRef, proj: &Projection) -> Result<[f64; 4]>;
+    /// Longitude and latitude of a cell of map `var`, where its geography is known.
+    fn lonlat(&self, var: &VarRef, cell: (usize, usize)) -> Option<(f64, f64)>;
 
     /// The map in `spec` with its range, contours and (if asked) statistics; one round
     /// trip for a remote backend. Contours or statistics that fail are left out.
@@ -296,6 +300,14 @@ impl Backend for Local {
             .iter()
             .find(|v| v.name == dim)?;
         self.cat.coord(source, &v.dims[0])
+    }
+
+    fn bounds(&self, var: &VarRef, proj: &Projection) -> Result<[f64; 4]> {
+        default_bounds(&self.cat, var, proj)
+    }
+
+    fn lonlat(&self, var: &VarRef, cell: (usize, usize)) -> Option<(f64, f64)> {
+        lonlat(&self.cat, var, cell)
     }
 
     fn check_overlay(

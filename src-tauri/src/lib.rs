@@ -354,18 +354,18 @@ async fn zoom_at(
     py: u32,
     factor: f64,
 ) -> Res<ViewState> {
-    on_map(&app, &w, |s, spec| bridge::zoom_at(s, spec, px, py, factor))
+    on_map(&app, &w, |s, spec| s.zoom_at(spec, px, py, factor))
 }
 
 #[tauri::command]
 async fn pan(app: State<'_, App>, w: WebviewWindow, dx: i64, dy: i64) -> Res<ViewState> {
-    on_map(&app, &w, |s, spec| bridge::pan(s, spec, dx, dy))
+    on_map(&app, &w, |s, spec| s.pan(spec, dx, dy))
 }
 
 #[tauri::command]
 async fn zoom_reset(app: State<'_, App>, w: WebviewWindow) -> Res<ViewState> {
     with(&app, &w, |s| {
-        s.zoom(None);
+        s.whole_map();
         Ok(bridge::state(s))
     })
 }

@@ -25,7 +25,7 @@ pub use crate::join::{JoinedReader, record_dim};
 pub use crate::mask::{Cond, Mask, Op, check_mask};
 pub use crate::netcdf::NetcdfReader;
 pub use crate::proj::{Ellipsoid, Projection, StereScale};
-pub use crate::reproject::{Target, default_bounds};
+pub use crate::reproject::{Target, default_bounds, lonlat};
 pub use crate::view::{
     Interp, RangeEstimate, Raster, Region, Series, SeriesSpec, Stats, ViewSpec, cell_at,
     finite_range, fit_size, masked, range, series, series_range, stats, value, view,

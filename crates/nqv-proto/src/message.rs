@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use nqv_core::{
-    ContourLine, ContourSpec, DirEntry, Mask, RangeEstimate, Series, SeriesSpec, Show, Stats,
-    VarInfo, VarRef, ViewSpec,
+    ContourLine, ContourSpec, DirEntry, Mask, Projection, RangeEstimate, Series, SeriesSpec, Show,
+    Stats, VarInfo, VarRef, ViewSpec,
 };
 use nqv_session::{CatalogInfo, OpenMode};
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,8 @@ pub enum Request {
     Describe(PathBuf),
     /// The text of a recipe in the server's ~/.nqv/recipes.
     Recipe(String),
+    Bounds(VarRef, Projection),
+    LonLat(VarRef, (usize, usize)),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +89,8 @@ pub enum Response {
     Dir(Vec<DirEntry>),
     Vars(Vec<VarInfo>),
     Text(Option<String>),
+    Bounds([f64; 4]),
+    LonLat(Option<(f64, f64)>),
     Error(String),
 }
 

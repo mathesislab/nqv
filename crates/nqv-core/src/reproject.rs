@@ -254,6 +254,14 @@ fn build(geo: &Geo, target: &Target, w: usize, h: usize) -> Lookup {
     }
 }
 
+/// Longitude and latitude of cell (`row`, `col`) of map `r`, where its grid's geography
+/// is known.
+pub fn lonlat(cat: &Catalog, r: &VarRef, cell: (usize, usize)) -> Option<(f64, f64)> {
+    let g = cat.geo_cached(r).ok()??;
+    let (x, y) = (*g.x.get(cell.1)?, *g.y.get(cell.0)?);
+    g.proj.inverse(x, y)
+}
+
 /// The part of `proj` to show for map `r` at first: around where its cells project to,
 /// within the projection's own extent (a polar projection down to the equator, the
 /// visible half of a globe), with a small margin.
