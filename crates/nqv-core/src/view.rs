@@ -315,9 +315,11 @@ pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize,
 pub struct Stats {
     pub min: f32,
     pub max: f32,
-    /// Unweighted mean and standard deviation.
+    /// Mean and standard deviation; area-weighted (by the cosine of latitude) on
+    /// latitude-longitude grids, else unweighted.
     pub mean: f64,
     pub std: f64,
+    pub weighted: bool,
     /// Cells with a value, and all cells looked at (the rest missing or masked).
     pub valid: usize,
     pub total: usize,
@@ -348,25 +350,66 @@ pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
             ..spec.clone()
         },
     )?;
-    let finite: Vec<f64> = r
-        .values
-        .iter()
-        .filter(|v| v.is_finite())
-        .map(|&v| v as f64)
-        .collect();
-    let n = finite.len();
-    let mean = finite.iter().sum::<f64>() / n.max(1) as f64;
-    let var_ = finite.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n.max(1) as f64;
+    // Weight per output row: cos(latitude) on latitude-longitude grids.
+    let lat = latitudes(cat, &spec.var, y);
+    let row_weight = |py: u32| -> f64 {
+        let Some(lat) = &lat else { return 1.0 };
+        let cell = cell_at(
+            cat,
+            &ViewSpec {
+                size,
+                ..spec.clone()
+            },
+            (0, py),
+        );
+        cell.and_then(|(cy, _)| lat.get(cy))
+            .map_or(0.0, |l| (*l as f64).to_radians().cos().max(0.0))
+    };
+    let weights: Vec<f64> = (0..r.h).map(row_weight).collect();
+    let (mut sw, mut swx, mut n) = (0.0, 0.0, 0);
+    for (k, &v) in r.values.iter().enumerate() {
+        if v.is_finite() {
+            let w = weights[k / r.w as usize];
+            sw += w;
+            swx += w * v as f64;
+            n += 1;
+        }
+    }
+    let mean = swx / sw;
+    let mut swd = 0.0;
+    for (k, &v) in r.values.iter().enumerate() {
+        if v.is_finite() {
+            swd += weights[k / r.w as usize] * (v as f64 - mean).powi(2);
+        }
+    }
+    let var_ = swd / sw;
     let (min, max) = finite_range(&r.values).unwrap_or((f32::NAN, f32::NAN));
     Ok(Stats {
         min,
         max,
-        mean: if n > 0 { mean } else { f64::NAN },
-        std: if n > 0 { var_.sqrt() } else { f64::NAN },
+        mean: if sw > 0.0 { mean } else { f64::NAN },
+        std: if sw > 0.0 { var_.sqrt() } else { f64::NAN },
+        weighted: lat.is_some(),
         valid: n,
         total: r.values.len(),
         exact,
     })
+}
+
+/// Latitudes of the rows of `var`'s map dimension `y`, when it is a latitude coordinate
+/// (units in degrees north, or named lat/latitude).
+fn latitudes(cat: &Catalog, var: &VarRef, y: usize) -> Option<Vec<f32>> {
+    let v = cat.var(var).ok()?;
+    let dim = &v.dims[y];
+    let c = cat.coord_var(var.source, dim)?;
+    let units = c.units.as_deref().unwrap_or("").to_lowercase();
+    let by_units =
+        units.starts_with("degree") && (units.ends_with("north") || units.ends_with("_n"));
+    let by_name = matches!(dim.name.to_lowercase().as_str(), "lat" | "latitude");
+    if !(by_units || by_name) {
+        return None;
+    }
+    cat.coord(var.source, dim)
 }
 
 /// Colour range from a sample of at most 256 x 256 points of the map slice. When a
@@ -547,6 +590,8 @@ mod tests {
         y_desc: bool,
         /// Added to every value of "f".
         offset: f32,
+        /// Coordinate values of y are the index times this.
+        y_scale: f32,
     }
 
     impl Mem {
@@ -573,6 +618,7 @@ mod tests {
                 nx,
                 y_desc,
                 offset: 0.0,
+                y_scale: 1.0,
             }
         }
     }
@@ -592,11 +638,12 @@ mod tests {
             if var == "y" {
                 return Ok((0..c[0])
                     .map(|i| {
-                        if self.y_desc {
+                        let v = if self.y_desc {
                             (self.ny - idx(0, i)) as f32
                         } else {
                             idx(0, i) as f32
-                        }
+                        };
+                        v * self.y_scale
                     })
                     .collect());
             }
@@ -788,6 +835,30 @@ mod tests {
                 .zip(&b.values)
                 .all(|(n, b)| n.is_nan() == b.is_nan())
         );
+    }
+
+    #[test]
+    fn statistics_weighted_by_latitude() {
+        // Rows at latitude 0 and 60 (weights 1 and 1/2); f = 10 y + x over 2 x 2 cells.
+        let mut m = Mem::new(1, 2, 2, false);
+        m.y_scale = 60.0;
+        m.vars[1].units = Some("degrees_north".into());
+        let c = cat(m);
+        let spec = ViewSpec {
+            var: vr("f"),
+            index: vec![0, 0, 0],
+            size: (2, 2),
+            mask: Mask::default(),
+            interp: Interp::Nearest,
+        };
+        let s = stats(&c, &spec).unwrap();
+        assert!(s.weighted);
+        // Row means 0.5 and 10.5, weighted 1 : 1/2.
+        let want = (0.5 + 10.5 * 0.5) / 1.5;
+        assert!((s.mean - want).abs() < 1e-5, "{} vs {want}", s.mean);
+        // Without latitude units: unweighted.
+        let s = stats(&cat(Mem::new(1, 2, 2, false)), &spec).unwrap();
+        assert!(!s.weighted && (s.mean - 5.5).abs() < 1e-9);
     }
 
     #[test]

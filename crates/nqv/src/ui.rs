@@ -323,8 +323,9 @@ fn draw_stats(f: &mut Frame, r: Rect, st: &Stats, units: Option<&str>) {
     if r.height == 1 {
         let share = 100.0 * st.valid as f64 / st.total.max(1) as f64;
         let text = format!(
-            "{approx}min {}  mean {}  max {}  std {}  cells {} ({share:.0}%){}",
+            "{approx}min {}  mean{} {}  max {}  std {}  cells {} ({share:.0}%){}",
             fmt(st.min),
+            if st.weighted { "(area)" } else { "" },
             fmt(st.mean as f32),
             fmt(st.max),
             fmt(st.std as f32),
@@ -349,11 +350,17 @@ fn draw_stats(f: &mut Frame, r: Rect, st: &Stats, units: Option<&str>) {
         })
         .bold(),
         row("min", fmt(st.min)),
-        row("mean", fmt(st.mean as f32)),
+        row(
+            if st.weighted { "mean*" } else { "mean" },
+            fmt(st.mean as f32),
+        ),
         row("max", fmt(st.max)),
-        row("std", fmt(st.std as f32)),
+        row(if st.weighted { "std*" } else { "std" }, fmt(st.std as f32)),
         row("cells", format!("{} ({share:.0}%)", count(st.valid))),
     ];
+    if st.weighted {
+        lines.push(Line::raw("* area-weighted").dim());
+    }
     if !st.exact {
         lines.push(Line::raw("~ from a sample").dim());
     }
