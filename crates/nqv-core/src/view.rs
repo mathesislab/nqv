@@ -3,6 +3,7 @@
 use anyhow::{Result, bail, ensure};
 
 use crate::mask::{check_mask, check_overlay, mask_index, mask_show};
+use crate::reproject::{Target, lookup};
 use crate::{Catalog, DimInfo, Kind, Mask, Show, VarInfo, VarRef};
 
 /// A map view: a variable, one index per dimension, and the output size in pixels.
@@ -15,8 +16,10 @@ pub struct ViewSpec {
     pub size: (u32, u32),
     pub mask: Mask,
     pub interp: Interp,
-    /// Part of the map shown (zoomed in); None for all of it.
+    /// Part of the map shown (zoomed in); None for all of it. Not with `proj`.
     pub region: Option<Region>,
+    /// The map in this projection, this part of it; None: on its own grid, as stored.
+    pub proj: Option<Target>,
 }
 
 /// A window of a map: half-open index ranges along its y and x dimensions (in the
@@ -268,6 +271,9 @@ pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
 
 fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
     let var = cat.var(&spec.var)?;
+    if spec.proj.is_some() {
+        return view_projected(cat, spec, var, show);
+    }
     let s = Sampling::new(cat, spec, var)?;
     let (y, x, my, mx) = (s.y, s.x, s.my, s.mx);
     check_index(var, &spec.index, &[y, x])?;
@@ -315,6 +321,23 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
             }
         }
     }
+    apply_mask(cat, spec, var, show, &mut values)?;
+    Ok(Raster {
+        w: s.w as u32,
+        h: s.h as u32,
+        values,
+    })
+}
+
+/// Hide the values of `spec`'s view where its mask says, the conditions' variables
+/// read on the same view.
+fn apply_mask(
+    cat: &Catalog,
+    spec: &ViewSpec,
+    var: &VarInfo,
+    show: Show,
+    values: &mut [f32],
+) -> Result<()> {
     if !spec.mask.is_empty() {
         check_mask(cat, &spec.var, &spec.mask)?;
         let mut cond_values = vec![];
@@ -327,15 +350,102 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
                 mask: Mask::default(),
                 interp: Interp::Nearest,
                 region: spec.region,
+                proj: spec.proj.clone(),
             };
             cond_values.push(view_as(cat, &mspec, mask_show(show))?.values);
         }
-        spec.mask.apply(&mut values, &cond_values);
+        spec.mask.apply(values, &cond_values);
     }
+    Ok(())
+}
+
+/// The map of `spec` in its target projection: the cells under the pixels read (the
+/// window they span, strided to about the view's resolution), then picked nearest or
+/// blended.
+fn view_projected(cat: &Catalog, spec: &ViewSpec, var: &VarInfo, show: Show) -> Result<Raster> {
+    let Kind::Map { y, x } = var.kind() else {
+        bail!("{} is not a map", var.name);
+    };
+    check_index(var, &spec.index, &[y, x])?;
+    let l = lookup(cat, spec)?;
+    let mut values = vec![f32::NAN; l.w * l.h];
+    if let Some((r0, r1, c0, c1)) = l.window {
+        let (nr, nc) = (r1 - r0, c1 - c0);
+        let sy = (nr / l.h).max(1);
+        let sx = (nc / l.w).max(1);
+        let (my, mx) = (nr.div_ceil(sy), nc.div_ceil(sx));
+        let mut start = spec.index.clone();
+        let mut count = vec![1; var.dims.len()];
+        let mut stride = vec![1; var.dims.len()];
+        (start[y], count[y], stride[y]) = (r0, my, sy);
+        (start[x], count[x], stride[x]) = (c0, mx, sx);
+        let data = cat.read_as(show, &spec.var, &start, &count, &stride)?;
+        ensure!(
+            data.len() == my * mx,
+            "{}: read {} values, expected {}",
+            var.name,
+            data.len(),
+            my * mx
+        );
+        let at = |r: usize, c: usize| {
+            if y < x {
+                data[r * mx + c]
+            } else {
+                data[c * my + r]
+            }
+        };
+        // whole-grid fractional cells to the strided read's
+        let row = |f: f32| ((f as f64 - r0 as f64) / sy as f64).clamp(0.0, (my - 1) as f64);
+        let col = |f: f32| {
+            let c = (f as f64 - c0 as f64) / sx as f64;
+            match l.wrap {
+                Some(_) => c.rem_euclid(mx as f64),
+                None => c.clamp(0.0, (mx - 1) as f64),
+            }
+        };
+        let wrapc = |c: usize| {
+            if l.wrap.is_some() {
+                c % mx
+            } else {
+                c.min(mx - 1)
+            }
+        };
+        for (v, cell) in values.iter_mut().zip(&l.at) {
+            let Some((fr, fc)) = *cell else { continue };
+            let (r, c) = (row(fr), col(fc));
+            let near = at(r.round() as usize, wrapc(c.round() as usize));
+            *v = match spec.interp {
+                Interp::Nearest => near,
+                Interp::Bilinear => {
+                    let (ra, ca) = (r.floor() as usize, c.floor() as usize);
+                    let (rb, cb) = ((ra + 1).min(my - 1), wrapc(ca + 1));
+                    let q = [at(ra, ca), at(ra, cb), at(rb, ca), at(rb, cb)];
+                    blend(q, (c - ca as f64) as f32, (r - ra as f64) as f32, near)
+                }
+            };
+        }
+    }
+    apply_mask(cat, spec, var, show, &mut values)?;
     Ok(Raster {
-        w: s.w as u32,
-        h: s.h as u32,
+        w: l.w as u32,
+        h: l.h as u32,
         values,
+    })
+}
+
+/// The view of `spec` on the map's own grid, over the cells its projected view shows
+/// (statistics and colour ranges are of cells, not of pixels).
+fn native(cat: &Catalog, spec: &ViewSpec) -> Result<ViewSpec> {
+    if spec.proj.is_none() {
+        return Ok(spec.clone());
+    }
+    let Some((y0, y1, x0, x1)) = lookup(cat, spec)?.window else {
+        bail!("{}: none of it is in view", spec.var.name);
+    };
+    Ok(ViewSpec {
+        proj: None,
+        region: Some(Region { y0, y1, x0, x1 }),
+        ..spec.clone()
     })
 }
 
@@ -344,6 +454,23 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
 /// `spec.size` or the variable is not a map.
 pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize, usize)> {
     let var = cat.var(&spec.var).ok()?;
+    if spec.proj.is_some() {
+        let l = lookup(cat, spec).ok()?;
+        let (c, r) = (px.0 as usize, px.1 as usize);
+        if c >= l.w || r >= l.h {
+            return None;
+        }
+        let (fr, fc) = l.at[r * l.w + c]?;
+        let Kind::Map { y, x } = var.kind() else {
+            return None;
+        };
+        let n = |f: f32, len: usize| (f.round().max(0.0) as usize).min(len - 1);
+        let col = match l.wrap {
+            Some(nx) => (fc.round() as usize) % nx,
+            None => n(fc, var.dims[x].len),
+        };
+        return Some((n(fr, var.dims[y].len), col));
+    }
     let s = Sampling::new(cat, spec, var).ok()?;
     let (c, r) = (px.0 as usize, px.1 as usize);
     if c >= s.w || r >= s.h {
@@ -376,6 +503,7 @@ const STATS_MAX: usize = 4_000_000;
 /// Statistics of the map slice in `spec` (with its mask and the comparison side shown),
 /// over every cell, or a regular sample of about 2000 x 2000 for larger slices.
 pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
+    let spec = &native(cat, spec)?;
     let var = cat.var(&spec.var)?;
     let Kind::Map { y, x } = var.kind() else {
         bail!("{} is not a map", var.name);
@@ -526,6 +654,7 @@ pub fn range(cat: &Catalog, spec: &ViewSpec) -> Result<RangeEstimate> {
 
 fn range_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<RangeEstimate> {
     const N: usize = 256;
+    let spec = &native(cat, spec)?;
     let var = cat.var(&spec.var)?;
     let Kind::Map { y, x } = var.kind() else {
         bail!("{} is not a map", var.name);
@@ -798,6 +927,7 @@ mod tests {
             skipped: vec![],
             notes: vec![],
             grid: None,
+            cache: Default::default(),
         }
     }
 
@@ -824,6 +954,7 @@ mod tests {
             mask: Mask::default(),
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         assert!(view(&c, &spec).unwrap().values.iter().all(|&v| v == -5.0));
         // Coordinates are not differenced: increasing y still puts y = 2 on top.
@@ -869,6 +1000,7 @@ mod tests {
             mask: Mask { conds },
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         // g = 10 y + x: hide g >= 21, i.e. row 2 from x = 1.
         let r = view(&c, &spec(vec![cond("g", Op::Ge, &[21.0])])).unwrap();
@@ -920,6 +1052,7 @@ mod tests {
             mask: Mask { conds },
             interp,
             region: None,
+            proj: None,
         };
         let r = view(&c, &spec(Interp::Bilinear, vec![])).unwrap();
         // Pixel (1, 0): a quarter of the way from column 0 to 1, clamped to row 0.
@@ -961,6 +1094,7 @@ mod tests {
             mask: Mask::default(),
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         // The area variable comes first: columns weighted 1 : 3, f = 10 y + x.
         let s = stats(&c, &spec).unwrap();
@@ -1002,6 +1136,7 @@ mod tests {
                 x0: 5,
                 x1: 8,
             }),
+            proj: None,
         };
         // Rows 2..4, columns 5..8 of f = 10 y + x, at full resolution.
         assert_eq!(
@@ -1042,6 +1177,7 @@ mod tests {
             mask: Mask { conds },
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         // f = 100 + 10 y + x over 3 x 4 cells, whatever the view size.
         let s = stats(&c, &spec(vec![])).unwrap();
@@ -1067,6 +1203,7 @@ mod tests {
             },
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         let e = view(&c, &spec).unwrap_err().to_string();
         assert!(e.contains("not on the grid"), "{e}");
@@ -1081,6 +1218,7 @@ mod tests {
             mask: Mask::default(),
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         let c = compare(Mem::new(2, 3, 4, false), Some(Mem::new(3, 3, 4, false)));
         let e = view(&c, &spec).unwrap_err().to_string();
@@ -1102,6 +1240,7 @@ mod tests {
                 mask: Mask::default(),
                 interp: Interp::Nearest,
                 region: None,
+                proj: None,
             },
         )
         .unwrap();
@@ -1121,6 +1260,7 @@ mod tests {
                 mask: Mask::default(),
                 interp: Interp::Nearest,
                 region: None,
+                proj: None,
             },
         )
         .unwrap();
@@ -1139,6 +1279,7 @@ mod tests {
                 mask: Mask::default(),
                 interp: Interp::Nearest,
                 region: None,
+                proj: None,
             },
         )
         .unwrap();
@@ -1166,6 +1307,7 @@ mod tests {
                     mask: Mask::default(),
                     interp: Interp::Nearest,
                     region: None,
+                    proj: None,
                 };
                 let r = view(&c, &spec).unwrap();
                 for py in 0..r.h {
@@ -1193,6 +1335,7 @@ mod tests {
             mask: Mask::default(),
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         let up = cat(Mem::new(1, 3, 4, false));
         assert_eq!(cell_at(&up, &spec((4, 3)), (0, 0)), Some((2, 0))); // top is last row
@@ -1208,6 +1351,7 @@ mod tests {
             mask: Mask::default(),
             interp: Interp::Nearest,
             region: None,
+            proj: None,
         };
         assert_eq!(cell_at(&down, &not_map, (0, 0)), None);
     }
@@ -1265,6 +1409,7 @@ mod tests {
                 mask: Mask::default(),
                 interp: Interp::Nearest,
                 region: None,
+                proj: None,
             },
         )
         .unwrap_err();

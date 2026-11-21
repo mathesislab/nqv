@@ -43,6 +43,7 @@ fn remote_matches_local() {
         mask: Mask::default(),
         interp: Interp::Bilinear,
         region: None,
+        proj: None,
     };
     let contour = ContourSpec {
         var: var.clone(),
@@ -104,6 +105,7 @@ fn errors_and_reopening_travel() {
         mask: Mask::default(),
         interp: Interp::Nearest,
         region: None,
+        proj: None,
     };
     let e = rem.view(&bad).unwrap_err().to_string();
     assert!(e.contains("nope"), "{e}");

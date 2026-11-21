@@ -117,6 +117,7 @@ mod tests {
             },
             interp: Interp::Bilinear,
             region: None,
+            proj: None,
         };
         let msgs = [
             Request::Hello { version: 1 },

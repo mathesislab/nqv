@@ -53,6 +53,7 @@ pub struct Catalog {
     pub notes: Vec<String>,
     /// A file whose grids give the geography of maps whose own files lack it (`--grid`).
     pub grid: Option<(PathBuf, Box<dyn Reader>)>,
+    pub(crate) cache: crate::reproject::Cache,
 }
 
 /// Whether `v` is data to show: neither a coordinate variable nor the grid mapping of
@@ -239,6 +240,7 @@ impl Catalog {
             skipped,
             notes: vec![],
             grid: None,
+            cache: Default::default(),
         }
     }
 
@@ -258,6 +260,7 @@ impl Catalog {
             );
         }
         self.grid = Some((path.to_path_buf(), Box::new(r)));
+        self.cache = Default::default();
         Ok(())
     }
 

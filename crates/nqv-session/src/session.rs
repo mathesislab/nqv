@@ -622,6 +622,7 @@ impl Session {
             mask: self.overlays().mask,
             interp: self.interp,
             region: self.region,
+            proj: None,
         }
     }
 
@@ -635,6 +636,7 @@ impl Session {
             mask: o.mask,
             interp: self.interp,
             region: self.region,
+            proj: None,
         };
         let p = self
             .backend
