@@ -3,6 +3,7 @@
 mod catalog;
 mod contour;
 mod geo;
+mod graticule;
 mod join;
 mod mask;
 mod netcdf;
@@ -19,6 +20,7 @@ pub use crate::contour::{
     ContourLine, ContourSpec, Levels, Segment, check_contour, contours, nice_ticks,
 };
 pub use crate::geo::Geo;
+pub use crate::graticule::{Graticule, graticule};
 pub use crate::join::{JoinedReader, record_dim};
 pub use crate::mask::{Cond, Mask, Op, check_mask};
 pub use crate::netcdf::NetcdfReader;
