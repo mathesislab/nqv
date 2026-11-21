@@ -13,7 +13,7 @@ use nqv_core::{
 use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines};
 use nqv_session::command::{self, RangeMode};
 use nqv_session::session::dir_of;
-use nqv_session::{Effect, Overlays, Probe, Session};
+use nqv_session::{Effect, LocalFiles, Overlays, Probe, Session};
 use ratatui::DefaultTerminal;
 use ratatui::layout::{Position, Rect, Size};
 use ratatui_image::{Resize, protocol::Protocol};
@@ -222,7 +222,7 @@ impl App {
             return true;
         }
         if let Some(b) = &mut self.browser {
-            match b.handle_key(code) {
+            match b.handle_key(self.s.backend.as_ref(), code) {
                 Action::None => {}
                 Action::Close => {
                     self.browser = None;
@@ -282,7 +282,8 @@ impl App {
             KeyCode::Char('i') => self.s.toggle_interp(),
             KeyCode::Char('o') => {
                 let file = self.s.source_path();
-                self.browser = Some(Browser::new(&dir_of(&file), Some(&file)));
+                let files = self.s.backend.as_ref();
+                self.browser = Some(Browser::new(files, &dir_of(&file), Some(&file)));
             }
             KeyCode::Char('O') if self.s.info().compare => {
                 self.message = Some("O: not in a comparison; use o".into())
@@ -335,7 +336,7 @@ impl App {
 
     /// File browser on its own, before anything is open; None when it is closed.
     pub fn pick(terminal: &mut DefaultTerminal, dir: &Path) -> Result<Option<App>> {
-        let mut b = Browser::new(dir, None);
+        let mut b = Browser::new(&LocalFiles, dir, None);
         loop {
             terminal.draw(|f| {
                 let area = f.area();
@@ -347,7 +348,7 @@ impl App {
             if k.kind != KeyEventKind::Press {
                 continue;
             }
-            match b.handle_key(k.code) {
+            match b.handle_key(&LocalFiles, k.code) {
                 Action::None => {}
                 Action::Close => return Ok(None),
                 Action::Open(paths) => {

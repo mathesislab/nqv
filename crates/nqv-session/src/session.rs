@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use nqv_core::{
     Cond, ContourLine, ContourSpec, Interp, Kind, Mask, RangeEstimate, Raster, Series, SeriesSpec,
-    Show, Stats, VarInfo, VarRef, ViewSpec, netcdf_files,
+    Show, Stats, VarInfo, VarRef, ViewSpec,
 };
 use nqv_render::{CMAPS, Norm, cmap_index};
 
@@ -100,26 +100,36 @@ impl Session {
 
     /// A session on the first variable of the most common kind, with default colours.
     pub fn new(backend: Box<dyn Backend>, origin: Origin) -> Result<Self> {
-        let info = backend.info();
-        let Some(first) = default_var(&info.data_vars()).cloned() else {
-            bail!("no data variables");
-        };
-        let (cmap, range_mode) = colour_defaults(if info.compare { info.show } else { Show::A });
         let mut s = Self {
             backend,
             origin,
-            var: first.clone(),
+            var: VarRef {
+                source: 0,
+                name: String::new(),
+            },
             index: vec![],
-            cmap,
-            range_mode,
+            cmap: 0,
+            range_mode: RangeMode::Auto,
             interp: Interp::Nearest,
             cvd: std::env::var("NQV_CVD").is_ok_and(|v| !v.is_empty() && v != "0"),
             mask: vec![],
             contour: None,
             probe: None,
         };
-        s.set_var(first);
+        s.reset()?;
         Ok(s)
+    }
+
+    /// The default variable and colours of the opened files.
+    fn reset(&mut self) -> Result<()> {
+        let info = self.info();
+        let Some(first) = default_var(&info.data_vars()).cloned() else {
+            bail!("no data variables");
+        };
+        (self.cmap, self.range_mode) =
+            colour_defaults(if info.compare { info.show } else { Show::A });
+        self.set_var(first);
+        Ok(())
     }
 
     pub fn info(&self) -> &CatalogInfo {
@@ -221,46 +231,49 @@ impl Session {
         Ok(())
     }
 
-    /// Absolute path of the current variable's (first) file.
+    /// Absolute path of the current variable's (first) file, where the data is.
     pub fn source_path(&self) -> PathBuf {
-        let p = &self.info().sources[self.var.source].path;
-        std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())
+        self.info().sources[self.var.source].path.clone()
     }
 
-    /// Open `paths` on this machine as a plain collection, keeping the variable (from
-    /// the same file if possible) with its steps, the colours outside comparisons, and
-    /// the mask.
+    /// Open `paths` (where the data is) as a plain collection, keeping the variable
+    /// (from the same file if possible) with its steps, the colours outside
+    /// comparisons, and the mask.
     pub fn reopen(&mut self, paths: &[PathBuf]) -> Result<(), String> {
-        let new = Session::open(paths, &OpenMode::default()).map_err(|e| format!("{e:#}"))?;
-        self.switch(new);
-        Ok(())
-    }
-
-    fn switch(&mut self, mut new: Session) {
-        let file = self.source_path();
-        let same_file = |r: &VarRef| {
-            std::fs::canonicalize(&new.info().sources[r.source].path).is_ok_and(|p| p == file)
+        let (file, old, index) = (
+            self.source_path(),
+            self.var_info().clone(),
+            self.index.clone(),
+        );
+        let (compare, colours) = (self.info().compare, (self.cmap, self.range_mode));
+        let mode = OpenMode::default();
+        self.backend
+            .reopen(paths, &mode)
+            .map_err(|e| format!("{e:#}"))?;
+        self.origin = Origin {
+            paths: paths.to_vec(),
+            mode,
         };
-        let candidates: Vec<VarRef> = new
+        self.reset().map_err(|e| format!("{e:#}"))?;
+        let candidates: Vec<VarRef> = self
             .info()
             .data_vars()
             .into_iter()
-            .filter(|(_, v)| v.name == self.var.name)
+            .filter(|(_, v)| v.name == old.name)
             .map(|(r, _)| r)
             .collect();
         let keep = candidates
             .iter()
-            .find(|r| same_file(r))
+            .find(|r| self.info().sources[r.source].path == file)
             .or(candidates.first())
             .cloned();
         if let Some(r) = keep {
-            new.keep_var(r, self.var_info(), &self.index);
+            self.keep_var(r, &old, &index);
         }
-        if !self.info().compare && !new.info().compare {
-            (new.cmap, new.range_mode) = (self.cmap, self.range_mode);
+        if !compare && !self.info().compare {
+            (self.cmap, self.range_mode) = colours;
         }
-        (new.mask, new.cvd, new.interp) = (self.mask.clone(), self.cvd, self.interp);
-        *self = new;
+        Ok(())
     }
 
     /// Select `r`, keeping `index` when `r` has the same dimensions as `old`.
@@ -296,7 +309,14 @@ impl Session {
             return Err("[ ]: comparing two files; compare folders to step through files".into());
         }
         let file = self.source_path();
-        let files = netcdf_files(&dir_of(&file)).unwrap_or_default();
+        let files: Vec<PathBuf> = self
+            .backend
+            .list_dir(&dir_of(&file))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| e.is_netcdf)
+            .map(|e| e.path)
+            .collect();
         let Some(pos) = files.iter().position(|f| f.file_name() == file.file_name()) else {
             return Ok(());
         };
@@ -516,24 +536,16 @@ impl Session {
             mask: o.mask,
             interp: self.interp,
         };
-        let raster = self.backend.view(&spec)?;
-        let range = self.backend.range(&spec)?;
-        let norm = self.norm(range.min, range.max);
-        let contours = match &o.contour {
-            Some(c) => self.backend.contours(&spec, c).unwrap_or_default(),
-            None => vec![],
-        };
-        let stats = match with_stats {
-            true => self.backend.stats(&spec).ok(),
-            false => None,
-        };
+        let p = self
+            .backend
+            .map_data(&spec, o.contour.as_ref(), with_stats)?;
         Ok(MapData {
+            norm: self.norm(p.range.min, p.range.max),
             spec,
-            raster,
-            range,
-            norm,
-            contours,
-            stats,
+            raster: p.raster,
+            range: p.range,
+            contours: p.contours,
+            stats: p.stats,
         })
     }
 

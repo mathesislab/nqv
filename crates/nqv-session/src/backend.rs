@@ -2,13 +2,14 @@
 //! ssh. A session sees only `CatalogInfo` (metadata) and asks a `Backend` for data, so
 //! the two are interchangeable.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use nqv_core::{
-    Catalog, ContourLine, ContourSpec, DimInfo, Mask, RangeEstimate, Raster, Series, SeriesSpec,
-    Show, Stats, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours, masked,
-    range, series, series_range, stats, value, view,
+    Catalog, ContourLine, ContourSpec, DimInfo, DirEntry, Mask, NetcdfReader, RangeEstimate,
+    Raster, Reader, Series, SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec, cell_at,
+    check_contour, check_mask, contours, list_dir, masked, range, series, series_range, stats,
+    value, view,
 };
 
 /// How paths are opened (the command-line options that decide it).
@@ -52,7 +53,8 @@ impl CatalogInfo {
                 .iter()
                 .enumerate()
                 .map(|(i, s)| SourceInfo {
-                    path: s.path.clone(),
+                    // Absolute, so a client never needs the server's working folder.
+                    path: std::fs::canonicalize(&s.path).unwrap_or_else(|_| s.path.clone()),
                     label: cat.label(i),
                     vars: s.reader.variables().to_vec(),
                     other: s.other.as_ref().map(|o| o.path.clone()),
@@ -103,9 +105,41 @@ impl CatalogInfo {
     }
 }
 
+/// A map with everything drawn over it, in one request.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MapParts {
+    pub raster: Raster,
+    pub range: RangeEstimate,
+    pub contours: Vec<ContourLine>,
+    pub stats: Option<Stats>,
+}
+
+/// Browsing the file system the data is on.
+pub trait Files {
+    /// Folders first, then files, by name; hidden entries left out.
+    fn list_dir(&self, path: &Path) -> Result<Vec<DirEntry>>;
+    /// The variables of a NetCDF file.
+    fn describe(&self, path: &Path) -> Result<Vec<VarInfo>>;
+}
+
+/// The file system of this machine.
+pub struct LocalFiles;
+
+impl Files for LocalFiles {
+    fn list_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        list_dir(path)
+    }
+
+    fn describe(&self, path: &Path) -> Result<Vec<VarInfo>> {
+        Ok(NetcdfReader::open(path)?.variables().to_vec())
+    }
+}
+
 /// Data for a session. Every method is one request of the protocol a remote backend
-/// will speak.
-pub trait Backend {
+/// speaks.
+pub trait Backend: Files {
+    /// Open other paths in place of the current ones (the same connection, remotely).
+    fn reopen(&mut self, paths: &[PathBuf], mode: &OpenMode) -> Result<()>;
     fn info(&self) -> &CatalogInfo;
     /// In a comparison, which side reads return.
     fn set_show(&mut self, show: Show);
@@ -122,6 +156,28 @@ pub trait Backend {
     /// Whether `mask` and contours can be drawn over `var`.
     fn check_overlay(&self, var: &VarRef, mask: &Mask, contour: Option<&ContourSpec>)
     -> Result<()>;
+
+    /// The map in `spec` with its range, contours and (if asked) statistics; one round
+    /// trip for a remote backend. Contours or statistics that fail are left out.
+    fn map_data(
+        &self,
+        spec: &ViewSpec,
+        contour: Option<&ContourSpec>,
+        with_stats: bool,
+    ) -> Result<MapParts> {
+        Ok(MapParts {
+            raster: self.view(spec)?,
+            range: self.range(spec)?,
+            contours: contour
+                .map(|c| self.contours(spec, c).unwrap_or_default())
+                .unwrap_or_default(),
+            stats: if with_stats {
+                self.stats(spec).ok()
+            } else {
+                None
+            },
+        })
+    }
 }
 
 /// Files read here.
@@ -157,7 +213,22 @@ impl Local {
     }
 }
 
+impl Files for Local {
+    fn list_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        LocalFiles.list_dir(path)
+    }
+
+    fn describe(&self, path: &Path) -> Result<Vec<VarInfo>> {
+        LocalFiles.describe(path)
+    }
+}
+
 impl Backend for Local {
+    fn reopen(&mut self, paths: &[PathBuf], mode: &OpenMode) -> Result<()> {
+        *self = Local::open(paths, mode)?;
+        Ok(())
+    }
+
     fn info(&self) -> &CatalogInfo {
         &self.info
     }

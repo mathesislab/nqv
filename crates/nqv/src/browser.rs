@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::KeyCode;
-use nqv_core::{DirEntry, Kind, NetcdfReader, Reader, list_dir};
+use nqv_core::{DirEntry, Kind, VarInfo};
+use nqv_session::Files;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
@@ -31,7 +32,7 @@ pub struct Browser {
 
 impl Browser {
     /// Browser on `dir`, with `select` highlighted if it is in it.
-    pub fn new(dir: &Path, select: Option<&Path>) -> Self {
+    pub fn new(files: &dyn Files, dir: &Path, select: Option<&Path>) -> Self {
         let mut b = Self {
             dir: dir.to_path_buf(),
             entries: vec![],
@@ -39,11 +40,11 @@ impl Browser {
             preview: None,
             message: None,
         };
-        b.load(select);
+        b.load(files, select);
         b
     }
 
-    fn load(&mut self, select: Option<&Path>) {
+    fn load(&mut self, files: &dyn Files, select: Option<&Path>) {
         let mut entries = vec![];
         if let Some(parent) = self.dir.parent() {
             entries.push(DirEntry {
@@ -54,7 +55,7 @@ impl Browser {
                 size: 0,
             });
         }
-        match list_dir(&self.dir) {
+        match files.list_dir(&self.dir) {
             Ok(list) => entries.extend(list.into_iter().filter(|e| e.is_dir || e.is_netcdf)),
             Err(e) => self.message = Some(format!("{}: {e}", self.dir.display())),
         }
@@ -62,19 +63,19 @@ impl Browser {
         self.sel = select
             .and_then(|p| self.entries.iter().position(|e| e.path == p))
             .unwrap_or(0);
-        self.update_preview();
+        self.update_preview(files);
     }
 
-    fn cd(&mut self, dir: PathBuf) {
+    fn cd(&mut self, files: &dyn Files, dir: PathBuf) {
         let from = std::mem::replace(&mut self.dir, dir);
-        self.load(Some(&from));
+        self.load(files, Some(&from));
     }
 
     fn selected(&self) -> Option<&DirEntry> {
         self.entries.get(self.sel)
     }
 
-    fn update_preview(&mut self) {
+    fn update_preview(&mut self, files: &dyn Files) {
         let Some(e) = self.selected().filter(|e| e.is_netcdf) else {
             self.preview = None;
             return;
@@ -82,13 +83,14 @@ impl Browser {
         if self.preview.as_ref().is_some_and(|(p, _)| *p == e.path) {
             return;
         }
-        let lines = NetcdfReader::open(&e.path)
-            .map(|r| describe(&r))
+        let lines = files
+            .describe(&e.path)
+            .map(|vars| describe(&vars))
             .map_err(|e| format!("{e:#}"));
         self.preview = Some((e.path.clone(), lines));
     }
 
-    pub fn handle_key(&mut self, code: KeyCode) -> Action {
+    pub fn handle_key(&mut self, files: &dyn Files, code: KeyCode) -> Action {
         self.message = None;
         let last = self.entries.len().saturating_sub(1);
         match code {
@@ -101,11 +103,11 @@ impl Browser {
             KeyCode::End => self.sel = last,
             KeyCode::Backspace | KeyCode::Left => {
                 if let Some(parent) = self.dir.parent() {
-                    self.cd(parent.to_path_buf());
+                    self.cd(files, parent.to_path_buf());
                 }
             }
             KeyCode::Enter | KeyCode::Right => match self.selected() {
-                Some(e) if e.is_dir => self.cd(e.path.clone()),
+                Some(e) if e.is_dir => self.cd(files, e.path.clone()),
                 Some(e) if e.is_netcdf => return Action::Open(vec![e.path.clone()]),
                 _ => {}
             },
@@ -119,7 +121,7 @@ impl Browser {
             }
             _ => {}
         }
-        self.update_preview();
+        self.update_preview(files);
         Action::None
     }
 
@@ -176,9 +178,8 @@ impl Browser {
 }
 
 /// One line per data variable: kind, name, dimensions, long name.
-fn describe(r: &dyn Reader) -> Vec<String> {
-    r.variables()
-        .iter()
+fn describe(vars: &[VarInfo]) -> Vec<String> {
+    vars.iter()
         .filter(|v| !v.is_coordinate())
         .map(|v| {
             let kind = match v.kind() {
