@@ -26,6 +26,7 @@ source(s) ─► nqv-core ─► Raster ─► nqv-render ─► RGBA ─► enc
 |---|---|---|
 | `nqv-core` | Catalog (files, groups, variables, grids), navigation, slicing, pixel→cell lookup, ranges, probes, diffs, caching, prefetch. No display code. | NetCDF reader, kiddo, rayon |
 | `nqv-render` | Normalisation, colour maps, colour bar, line plots. Pure functions; also builds to WASM. | none |
+| `nqv-session` | View state, commands, recipes, file switching, PNG output; data through a `Backend` trait (`Local` now; `Remote` over ssh in phase 2). Shared by the terminal app, the Tauri desktop app and `nqv-local`. | core, render |
 | `nqv-proto` | Protocol messages and Raster encoding (f16 + zstd). | core types |
 | `nqv` | The single HPC binary: terminal UI, browse mode, `nqv serve --stdio`. | all of the above, ratatui |
 | `nqv-local` | Laptop agent: native window and web client, reached from the HPC via a forwarded socket. | proto, render |

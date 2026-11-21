@@ -113,7 +113,8 @@ This installs `~/bin/nqv` on each host (`NQV_DEST` changes the folder). Add `~/b
 | Crate | Role |
 |---|---|
 | `nqv-core` | `Reader` trait, NetCDF reader (`netcdf-reader`), screen-sized raster views, colour range |
-| `nqv-render` | Normalisation, colour maps; no dependencies |
-| `nqv` | Terminal app |
+| `nqv-render` | Normalisation, colour maps, contour drawing; no dependencies |
+| `nqv-session` | What a viewer does, for every front end: view state, `:` commands and flags, recipes, file switching, PNG output; reads data through a `Backend` (local files now, a server over ssh next) |
+| `nqv` | Terminal app: drawing, keys, mouse |
 
 `cargo run --release -p nqv-core --example probe -- FILE` lists the map variables of a file with view timings.
