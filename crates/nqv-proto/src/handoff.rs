@@ -2,7 +2,7 @@
 //! the nqv window on the laptop.
 //!
 //! The desktop app listens on `~/.nqv/desktop.sock`; ssh forwards it to the cluster
-//! (`RemoteForward /tmp/nqv-%r.sock ~/.nqv/desktop.sock`). `nqv -g` connects there,
+//! (`RemoteForward /run/user/UID/nqv.sock %d/.nqv/desktop.sock`). `nqv -g` connects there,
 //! sends the protocol version and a `Handoff` (paths and view as commands), and reads
 //! the `Answer`. On `Serve` the same stream carries the protocol, with `nqv -g` as the
 //! server (`serve`) and the window as the client, till the window lets go.
@@ -45,9 +45,25 @@ pub enum Answer {
     Refused(String),
 }
 
+/// Where ssh forwards the desktop app's socket to: the user's runtime folder on the
+/// login node. sshd leaves a forwarded socket behind when the session ends, and then
+/// cannot forward to that path again; the runtime folder goes when the user's last
+/// session on the node ends, and the socket with it.
+pub fn forwarded_socket() -> Option<PathBuf> {
+    let run = match std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        // The user's uid, as the owner of their home folder.
+        None => {
+            let home = std::env::var_os("HOME")?;
+            PathBuf::from(format!("/run/user/{}", std::fs::metadata(home).ok()?.uid()))
+        }
+    };
+    Some(run.join("nqv.sock"))
+}
+
 /// Where `nqv -g` looks for the desktop app: `$NQV_GUI_SOCKET`, else the forwarded
-/// `/tmp/nqv-$USER.sock` (node-local, as ssh makes it on a cluster's login node) and
-/// the app's own socket (the same machine).
+/// socket, `/tmp/nqv-$USER.sock` (for systems without runtime folders) and the app's
+/// own socket (the same machine).
 pub fn sockets() -> Vec<PathBuf> {
     if let Some(s) = std::env::var_os("NQV_GUI_SOCKET").filter(|s| !s.is_empty()) {
         return vec![PathBuf::from(s)];
@@ -55,7 +71,8 @@ pub fn sockets() -> Vec<PathBuf> {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
         .unwrap_or_default();
-    let mut v = vec![PathBuf::from(format!("/tmp/nqv-{user}.sock"))];
+    let mut v: Vec<PathBuf> = forwarded_socket().into_iter().collect();
+    v.push(PathBuf::from(format!("/tmp/nqv-{user}.sock")));
     v.extend(desktop_socket());
     v
 }
@@ -79,10 +96,10 @@ pub fn hostname() -> String {
 }
 
 /// Hand `h` to the desktop app at the first of `sockets` that answers. On `Serve`, the
-/// stream is for `serve`. An error says why there is no window (none reachable, or
-/// refused).
+/// stream is for `serve`. An error says why there is no window, and what to do.
 pub fn offer(sockets: &[PathBuf], h: &Handoff) -> Result<(Answer, UnixStream)> {
-    let mut why = vec![];
+    let mut stale = vec![];
+    let mut other = vec![];
     for path in sockets {
         match connect(path) {
             Ok(mut s) => {
@@ -95,36 +112,64 @@ pub fn offer(sockets: &[PathBuf], h: &Handoff) -> Result<(Answer, UnixStream)> {
                 }
                 return Ok((answer, s));
             }
-            Err(e) => why.push(format!("{}: {e:#}", path.display())),
+            Err(Failed::Missing) => {}
+            Err(Failed::Stale) => stale.push(path.display().to_string()),
+            Err(Failed::Other(e)) => other.push(format!("{}: {e}", path.display())),
         }
     }
-    bail!("no nqv desktop app reachable ({})", why.join("; "))
+    if !other.is_empty() {
+        bail!("no nqv desktop app reachable: {}", other.join("; "));
+    }
+    if !stale.is_empty() {
+        bail!(
+            "no nqv desktop app reachable: {} was left by an ssh session or nqv app that ended (removed \
+             now); log in again with the nqv app running on your laptop",
+            stale.join(", ")
+        );
+    }
+    let forward =
+        forwarded_socket().map_or("/run/user/UID/nqv.sock".into(), |p| p.display().to_string());
+    bail!(
+        "no nqv desktop app reachable: no socket forwarded by ssh. On your laptop, add \
+         `RemoteForward {forward} %d/.nqv/desktop.sock` to this host in ~/.ssh/config, \
+         and log in again with the nqv app running"
+    )
 }
 
-/// Connect to a socket of ours. One that refuses is left from an ssh session or an app
-/// that is gone: it is removed, so the next ssh login can forward there again.
-fn connect(path: &Path) -> Result<UnixStream> {
+/// Why a socket could not be used.
+enum Failed {
+    /// No socket there.
+    Missing,
+    /// Nothing listens (removed).
+    Stale,
+    Other(String),
+}
+
+/// Connect to a socket of ours. One that refuses was left by an ssh session or an app
+/// that has ended: it is removed, so the next ssh login can forward there again.
+fn connect(path: &Path) -> Result<UnixStream, Failed> {
+    let other = |e: std::io::Error| Failed::Other(e.to_string());
     let meta = match std::fs::symlink_metadata(path) {
         Ok(m) => m,
-        Err(e) if e.kind() == ErrorKind::NotFound => bail!("none"),
-        Err(e) => return Err(e.into()),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Err(Failed::Missing),
+        Err(e) => return Err(other(e)),
     };
     if !meta.file_type().is_socket() {
-        bail!("not a socket");
+        return Err(Failed::Other("not a socket".into()));
     }
     // Anyone may create a file in /tmp: only a socket of the user's own is trusted with
     // the view (the home folder's owner is the user).
-    let home = std::env::var_os("HOME").context("no HOME")?;
-    if meta.uid() != std::fs::metadata(home)?.uid() {
-        bail!("belongs to another user");
+    let home = std::env::var_os("HOME").ok_or(Failed::Other("no HOME".into()))?;
+    if meta.uid() != std::fs::metadata(home).map_err(other)?.uid() {
+        return Err(Failed::Other("belongs to another user".into()));
     }
     match UnixStream::connect(path) {
         Ok(s) => Ok(s),
         Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
             let _ = std::fs::remove_file(path);
-            bail!("nothing listening (removed)")
+            Err(Failed::Stale)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(other(e)),
     }
 }
 

@@ -76,6 +76,6 @@ fn stale_socket_removed() {
     drop(UnixListener::bind(&path).unwrap());
     assert!(path.exists());
     let e = handoff::offer(std::slice::from_ref(&path), &sent()).unwrap_err();
-    assert!(format!("{e}").contains("nothing listening"), "{e}");
+    assert!(format!("{e}").contains("left by an ssh session"), "{e}");
     assert!(!path.exists());
 }
