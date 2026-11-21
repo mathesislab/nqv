@@ -100,6 +100,15 @@ Beside a map (or on a line below it when there is no room) the terminal shows st
 
 Graphics output is detected at start. Terminals without an image protocol (Terminal.app, GNOME Terminal, anything under tmux) get half-block characters. Set a default with `NQV_GFX`, e.g. `export NQV_GFX=blocks256` for terminals without true colour.
 
+### Desktop app
+
+A window on the same session (Tauri 2 + SvelteKit; macOS, Linux, Windows): the map drawn with WebGL at full screen resolution, colour bar and statistics, wheel to zoom around the pointer, drag to pan, click for a cell's value and series, sliders for time and levels, the toolbar for colour map, range, interpolation, colour-blind mode and comparison side, and the same `:` commands and keys (`z` whole map, `o` open). Open local files or folders, or paths on a host over ssh (as `nqv HOST:PATH`); `nqv-desktop FILE...` opens local files at start. `Save PNG…` writes the PNG of `--png`, `copy command` the terminal command line for the view.
+
+```bash
+npm install
+npm run tauri dev
+```
+
 ## Build
 
 On your own machine (for remote files, or local ones): `cargo install --path crates/nqv`, which puts `nqv` in `~/.cargo/bin`.
@@ -123,8 +132,9 @@ This installs `~/bin/nqv` on each host (`NQV_DEST` changes the folder). Add `~/b
 |---|---|
 | `nqv-core` | `Reader` trait, NetCDF reader (`netcdf-reader`), screen-sized raster views, colour range |
 | `nqv-render` | Normalisation, colour maps, contour drawing; no dependencies |
-| `nqv-session` | What a viewer does, for every front end: view state, `:` commands and flags, recipes, file switching, PNG output; reads data through a `Backend` (local files now, a server over ssh next) |
+| `nqv-session` | What a viewer does, for every front end: view state, `:` commands and flags, recipes, file switching, PNG output; reads data through a `Backend` (local files, or a server over ssh) |
 | `nqv-proto` | Protocol between a session and `nqv serve --stdio`: framed postcard messages, maps quantised to 16 bits and LZ4-compressed; the server loop and the `Remote` backend over ssh |
+| `src-tauri` (`nqv-desktop`), `src/` | Desktop app: Tauri commands around a session (maps as raw f32 bytes), Svelte front end with a WebGL map |
 | `nqv` | Terminal app: drawing, keys, mouse; `nqv serve --stdio` |
 
 `cargo run --release -p nqv-core --example probe -- FILE` lists the map variables of a file with view timings.

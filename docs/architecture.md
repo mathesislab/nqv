@@ -26,9 +26,10 @@ source(s) ─► nqv-core ─► Raster ─► nqv-render ─► RGBA ─► enc
 |---|---|---|
 | `nqv-core` | Catalog (files, groups, variables, grids), navigation, slicing, pixel→cell lookup, ranges, probes, diffs, caching, prefetch. No display code. | NetCDF reader, kiddo, rayon |
 | `nqv-render` | Normalisation, colour maps, colour bar, line plots. Pure functions; also builds to WASM. | none |
-| `nqv-session` | View state, commands, recipes, file switching, PNG output; data through a `Backend` trait (`Local` now; `Remote` over ssh in phase 2). Shared by the terminal app, the Tauri desktop app and `nqv-local`. | core, render |
+| `nqv-session` | View state, commands, recipes, file switching, PNG output; data through a `Backend` trait (`Local`, or `Remote` over ssh). Shared by the terminal app, the Tauri desktop app and `nqv-local`. | core, render |
 | `nqv-proto` | Protocol (implemented): one request per `Backend` method plus `MapData` (a frame in one round trip), `ListDir`, `Describe`, `Open`; postcard frames with a length prefix and a version handshake; maps quantised to u16 (65535 missing) and LZ4-compressed; `serve` (behind `nqv serve --stdio`) and the `Remote` backend over ssh (`nqv HOST:PATH`). | core, session |
 | `nqv` | The single HPC binary: terminal UI, browse mode, `nqv serve --stdio`. | all of the above, ratatui |
+| `nqv-desktop` | Tauri 2 + SvelteKit window on a `Session` (implemented): commands return the session's state as JSON and maps as raw f32 values with a JSON header (binary IPC); WebGL2 colours them (R32F texture, 256-entry colour map texture, log in the shader), so a colour map change only redraws. Zoom and pan work on `Session::zoom` (the `ViewSpec` region). | session, proto |
 | `nqv-local` | Laptop agent: native window and web client, reached from the HPC via a forwarded socket. | proto, render |
 
 Cut points:
@@ -189,4 +190,4 @@ ice:H_ice  t=124/501  [0, 3500] viridis
 1. Spike: `nqv file.nc` with core slice reading, render, and the half-block + kitty tiers with detection. Test from Albedo into Terminal.app and Ghostty. The real `Raster` type from the start.
 2. Core proper: catalog, collections, navigation, lazy reads, range estimates, prefetch, mesh index cache.
 3. Protocol and `nqv serve --stdio`; socket handoff to `nqv-local`.
-4. Native and web clients.
+4. Native and web clients: the Tauri desktop app (done); `nqv-local` with a browser client and the `--gui` handoff (next).
