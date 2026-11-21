@@ -9,8 +9,8 @@ use anyhow::{Result, bail};
 
 pub use crate::netcdf::NetcdfReader;
 pub use crate::view::{
-    RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, finite_range, fit_size, range, series,
-    value, view,
+    RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, cell_at, finite_range, fit_size, range,
+    series, value, view,
 };
 
 /// How a variable is shown, from its dimensions of length other than 1.

@@ -93,28 +93,73 @@ fn check_index(var: &VarInfo, index: &[usize], free: &[usize]) -> Result<()> {
     Ok(())
 }
 
+/// How a map is read with a stride and resampled to an output size by nearest neighbour.
+struct Sampling {
+    /// Map dimensions of the variable.
+    y: usize,
+    x: usize,
+    /// Output size in pixels.
+    w: usize,
+    h: usize,
+    /// Read strides and number of points read along y and x.
+    sy: usize,
+    sx: usize,
+    my: usize,
+    mx: usize,
+    /// Whether output row 0 shows the last row read (y increasing upwards).
+    flip: bool,
+}
+
+impl Sampling {
+    fn new(cat: &Catalog, var: &VarInfo, size: (u32, u32)) -> Result<Self> {
+        let Kind::Map { y, x } = var.kind() else {
+            bail!("{} is not a map", var.name);
+        };
+        let (ny, nx) = (var.dims[y].len, var.dims[x].len);
+        for d in [&var.dims[y], &var.dims[x]] {
+            ensure!(d.len > 0, "{}: dimension '{}' is empty", var.name, d.name);
+        }
+        let (w, h) = (size.0.max(1) as usize, size.1.max(1) as usize);
+        let sx = (nx / w).max(1);
+        let sy = (ny / h).max(1);
+        Ok(Self {
+            y,
+            x,
+            w,
+            h,
+            sy,
+            sx,
+            my: ny.div_ceil(sy),
+            mx: nx.div_ceil(sx),
+            flip: !y_decreasing(cat, &var.dims[y]),
+        })
+    }
+
+    /// Row of the strided read shown at output row `py`.
+    fn row(&self, py: usize) -> usize {
+        let r = nearest(py, self.h, self.my);
+        if self.flip { self.my - 1 - r } else { r }
+    }
+
+    /// Column of the strided read shown at output column `px`.
+    fn col(&self, px: usize) -> usize {
+        nearest(px, self.w, self.mx)
+    }
+}
+
 /// Read the map slice in `spec` with a stride matched to the output size, then
 /// resample to exactly `spec.size` by nearest neighbour.
 pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
     let var = cat.var(&spec.var)?;
-    let Kind::Map { y, x } = var.kind() else {
-        bail!("{} is not a map", var.name);
-    };
+    let s = Sampling::new(cat, var, spec.size)?;
+    let (y, x, my, mx) = (s.y, s.x, s.my, s.mx);
     check_index(var, &spec.index, &[y, x])?;
-    let (ydim, xdim) = (&var.dims[y], &var.dims[x]);
-    let (ny, nx) = (ydim.len, xdim.len);
-    let (w, h) = (spec.size.0.max(1) as usize, spec.size.1.max(1) as usize);
-
-    let sx = (nx / w).max(1);
-    let sy = (ny / h).max(1);
-    let mx = nx.div_ceil(sx);
-    let my = ny.div_ceil(sy);
 
     let mut start = spec.index.clone();
     let mut count = vec![1; var.dims.len()];
     let mut stride = vec![1; var.dims.len()];
-    (start[y], count[y], stride[y]) = (0, my, sy);
-    (start[x], count[x], stride[x]) = (0, mx, sx);
+    (start[y], count[y], stride[y]) = (0, my, s.sy);
+    (start[x], count[x], stride[x]) = (0, mx, s.sx);
     let data = cat.reader.read_slice(&var.name, &start, &count, &stride)?;
     ensure!(
         data.len() == my * mx,
@@ -132,19 +177,30 @@ pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
             data[c * my + r]
         }
     };
-    let flip = !y_decreasing(cat, ydim);
-    let cols: Vec<usize> = (0..w).map(|px| nearest(px, w, mx)).collect();
-    let mut values = Vec::with_capacity(w * h);
-    for py in 0..h {
-        let r = nearest(py, h, my);
-        let r = if flip { my - 1 - r } else { r };
+    let cols: Vec<usize> = (0..s.w).map(|px| s.col(px)).collect();
+    let mut values = Vec::with_capacity(s.w * s.h);
+    for py in 0..s.h {
+        let r = s.row(py);
         values.extend(cols.iter().map(|&c| at(r, c)));
     }
     Ok(Raster {
-        w: w as u32,
-        h: h as u32,
+        w: s.w as u32,
+        h: s.h as u32,
         values,
     })
+}
+
+/// Map cell shown at pixel `px` (column, row from the top) of `view(cat, spec)`:
+/// indices (y, x) in the variable's own map dimensions. None when `px` lies outside
+/// `spec.size` or the variable is not a map.
+pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize, usize)> {
+    let var = cat.var(&spec.var).ok()?;
+    let s = Sampling::new(cat, var, spec.size).ok()?;
+    let (c, r) = (px.0 as usize, px.1 as usize);
+    if c >= s.w || r >= s.h {
+        return None;
+    }
+    Some((s.row(r) * s.sy, s.col(c) * s.sx))
 }
 
 /// Colour range from a sample of at most 256 x 256 points of the map slice.
@@ -354,6 +410,63 @@ mod tests {
         .unwrap();
         assert_eq!((r.w, r.h), (4, 2));
         assert_eq!(r.values, [0.0, 2.0, 4.0, 6.0, 40.0, 42.0, 44.0, 46.0]);
+    }
+
+    /// Every pixel of the view shows the value of the cell `cell_at` returns for it.
+    #[test]
+    fn cell_at_inverts_view() {
+        // (ny, nx, size): full resolution, downsampled, upsampled, uneven.
+        let cases = [
+            (3, 4, (4, 3)),
+            (8, 8, (4, 2)),
+            (3, 4, (9, 7)),
+            (7, 9, (4, 3)),
+        ];
+        for y_desc in [false, true] {
+            for (ny, nx, size) in cases {
+                let c = cat(Mem::new(2, ny, nx, y_desc));
+                let spec = ViewSpec {
+                    var: "f".into(),
+                    index: vec![1, 0, 0],
+                    size,
+                };
+                let r = view(&c, &spec).unwrap();
+                for py in 0..r.h {
+                    for px in 0..r.w {
+                        let (cy, cx) = cell_at(&c, &spec, (px, py)).unwrap();
+                        assert!(cy < ny && cx < nx);
+                        let v = r.values[(py * r.w + px) as usize];
+                        assert_eq!(
+                            v,
+                            (100 + 10 * cy + cx) as f32,
+                            "{y_desc} {size:?} {px} {py}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cell_at_corners_and_outside() {
+        let spec = |size| ViewSpec {
+            var: "f".into(),
+            index: vec![0, 0, 0],
+            size,
+        };
+        let up = cat(Mem::new(1, 3, 4, false));
+        assert_eq!(cell_at(&up, &spec((4, 3)), (0, 0)), Some((2, 0))); // top is last row
+        assert_eq!(cell_at(&up, &spec((4, 3)), (3, 2)), Some((0, 3)));
+        assert_eq!(cell_at(&up, &spec((4, 3)), (4, 0)), None);
+        assert_eq!(cell_at(&up, &spec((4, 3)), (0, 3)), None);
+        let down = cat(Mem::new(1, 3, 4, true));
+        assert_eq!(cell_at(&down, &spec((4, 3)), (0, 0)), Some((0, 0)));
+        let not_map = ViewSpec {
+            var: "y".into(),
+            index: vec![0],
+            size: (4, 3),
+        };
+        assert_eq!(cell_at(&down, &not_map, (0, 0)), None);
     }
 
     #[test]
