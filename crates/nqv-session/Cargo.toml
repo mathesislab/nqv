@@ -1,6 +1,6 @@
 [package]
 name = "nqv-session"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 
@@ -8,6 +8,6 @@ license.workspace = true
 anyhow = "1.0.104"
 font8x8 = "0.3.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-nqv-core = { version = "0.1.0", path = "../nqv-core", features = ["serde"] }
-nqv-render = { version = "0.1.0", path = "../nqv-render" }
+nqv-core = { path = "../nqv-core", features = ["serde"] }
+nqv-render = { path = "../nqv-render" }
 serde = { version = "1.0.229", features = ["derive"] }

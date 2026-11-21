@@ -1,13 +1,13 @@
 [package]
 name = "nqv-proto"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
 lz4_flex = "0.14.2"
-nqv-core = { version = "0.1.0", path = "../nqv-core", features = ["serde"] }
-nqv-session = { version = "0.1.0", path = "../nqv-session" }
+nqv-core = { path = "../nqv-core", features = ["serde"] }
+nqv-session = { path = "../nqv-session" }
 postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
 serde = { version = "1.0.229", features = ["derive"] }
