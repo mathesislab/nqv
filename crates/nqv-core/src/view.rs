@@ -49,6 +49,33 @@ fn window(spec: &ViewSpec, ny: usize, nx: usize) -> (usize, usize, usize, usize)
     }
 }
 
+/// Where fractional cell (row, column) of map `spec`, on its own grid, lies in the view:
+/// pixels, `i` covering `i..i + 1`. None for a projected view or a non-map.
+pub(crate) fn cell_pixel(
+    cat: &Catalog,
+    spec: &ViewSpec,
+) -> Option<impl Fn(f64, f64) -> (f64, f64)> {
+    if spec.proj.is_some() {
+        return None;
+    }
+    let var = cat.var(&spec.var).ok()?;
+    let Kind::Map { y, x } = var.kind() else {
+        return None;
+    };
+    let (oy, ny, ox, nx) = window(spec, var.dims[y].len, var.dims[x].len);
+    let flip = !y_decreasing(cat, spec.var.source, &var.dims[y]);
+    let (w, h) = (spec.size.0.max(1) as f64, spec.size.1.max(1) as f64);
+    let (oy, ny, ox, nx) = (oy as f64, ny as f64, ox as f64, nx as f64);
+    Some(move |r: f64, c: f64| {
+        let row = if flip {
+            oy + ny - r - 0.5
+        } else {
+            r - oy + 0.5
+        };
+        ((c - ox + 0.5) * w / nx, row * h / ny)
+    })
+}
+
 /// How a map is resampled to the view size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

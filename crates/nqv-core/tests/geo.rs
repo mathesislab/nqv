@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use nqv_core::{
-    Catalog, Interp, Mask, Projection, Target, VarRef, ViewSpec, cell_at, default_bounds, stats,
-    view,
+    Catalog, Interp, Mask, Projection, Target, VarRef, ViewSpec, cell_at, coastlines,
+    default_bounds, stats, view,
 };
 
 fn data(name: &str) -> PathBuf {
@@ -219,4 +219,49 @@ fn a_projection_for_the_files_own_coordinates() {
         cat.geo(&var("dist")).unwrap(),
         own.geo(&var("dist")).unwrap()
     );
+}
+
+/// Coastlines into the grid's own cells agree with coastlines through its projection
+/// (bounds on the cell edges, a pixel per cell): two ways to the same pixels.
+#[test]
+fn coastlines_on_the_grid_and_projected_agree() {
+    let cat = Catalog::open(&[data("stere.nc")]).unwrap();
+    let g = cat.geo(&var("dist")).unwrap().unwrap();
+    let (dx, dy) = (g.x[1] - g.x[0], g.y[1] - g.y[0]);
+    let target = Target {
+        proj: g.proj.clone(),
+        bounds: [
+            g.x[0] - dx / 2.0,
+            g.x[21] + dx / 2.0,
+            g.y[0] - dy / 2.0,
+            g.y[36] + dy / 2.0,
+        ],
+    };
+    let size = (220, 370);
+    let native = coastlines(&cat, &spec("dist", vec![0, 0], size, None));
+    let projected = coastlines(&cat, &spec("dist", vec![0, 0], size, Some(target)));
+    assert!(native.len() > 200, "{} segments", native.len());
+    // the native path drops points beyond the outer cell centres: a few segments fewer
+    assert!(projected.len() >= native.len());
+    for s in &native {
+        let found = projected.iter().any(|p| {
+            (0..2).all(|k| (p[k].0 - s[k].0).abs() < 0.05 && (p[k].1 - s[k].1).abs() < 0.05)
+        });
+        assert!(found, "{s:?} not among the projected segments");
+        for (x, y) in s {
+            assert!((-1.0..=221.0).contains(x) && (-1.0..=371.0).contains(y));
+        }
+    }
+}
+
+/// A global latitude-longitude grid on its own grid: every coast, none across the seam.
+#[test]
+fn coastlines_on_a_global_grid() {
+    let cat = Catalog::open(&[small()]).unwrap();
+    let c = coastlines(&cat, &spec("temp", vec![0, 0, 0], (360, 180), None));
+    assert!(c.len() > 20_000, "{} segments", c.len());
+    assert!(c.iter().all(|s| (s[0].0 - s[1].0).abs() < 180.0));
+    // a grid nqv cannot place gets none
+    let cat = Catalog::open(&[data("nocrs.nc")]).unwrap();
+    assert!(coastlines(&cat, &spec("dist", vec![0, 0], (22, 37), None)).is_empty());
 }

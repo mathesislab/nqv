@@ -67,11 +67,6 @@ pub fn graticule(target: &Target, size: (u32, u32)) -> Graticule {
         step(lon_span)
     };
     let dlat = step(lat.1 - lat.0);
-    let in_view = |p: (f64, f64)| {
-        p.0 >= -1.0 && p.0 <= w as f64 + 1.0 && p.1 >= -1.0 && p.1 <= h as f64 + 1.0
-    };
-    // A line through points along it: segments between neighbours both shown, at least
-    // one in view, not jumping across the view (a seam).
     let trace = |pts: &mut dyn Iterator<Item = (f64, f64)>| -> Vec<Segment> {
         let px: Vec<Option<(f64, f64)>> = pts
             .map(|(lo, la)| {
@@ -81,14 +76,7 @@ pub fn graticule(target: &Target, size: (u32, u32)) -> Graticule {
                     .map(|(x, y)| target.pixel(x, y, w, h))
             })
             .collect();
-        px.windows(2)
-            .filter_map(|p| {
-                let (a, b) = (p[0]?, p[1]?);
-                let jump = (a.0 - b.0).abs() > w as f64 / 2.0 || (a.1 - b.1).abs() > h as f64 / 2.0;
-                ((in_view(a) || in_view(b)) && !jump)
-                    .then_some([(a.0 as f32, a.1 as f32), (b.0 as f32, b.1 as f32)])
-            })
-            .collect()
+        trace(&px, (w, h))
     };
     let lines = |levels: Vec<f64>, along: &dyn Fn(f64) -> Vec<(f64, f64)>| {
         levels
@@ -141,6 +129,22 @@ pub fn graticule(target: &Target, size: (u32, u32)) -> Graticule {
         meridians,
         parallels,
     }
+}
+
+/// A line through points along it, in pixels of a `size` view (None: not shown):
+/// segments between neighbours both shown, at least one in view, not jumping across the
+/// view (a seam).
+pub(crate) fn trace(px: &[Option<(f64, f64)>], size: (u32, u32)) -> Vec<Segment> {
+    let (w, h) = (size.0 as f64, size.1 as f64);
+    let in_view = |p: (f64, f64)| p.0 >= -1.0 && p.0 <= w + 1.0 && p.1 >= -1.0 && p.1 <= h + 1.0;
+    px.windows(2)
+        .filter_map(|p| {
+            let (a, b) = (p[0]?, p[1]?);
+            let jump = (a.0 - b.0).abs() > w / 2.0 || (a.1 - b.1).abs() > h / 2.0;
+            ((in_view(a) || in_view(b)) && !jump)
+                .then_some([(a.0 as f32, a.1 as f32), (b.0 as f32, b.1 as f32)])
+        })
+        .collect()
 }
 
 #[cfg(test)]

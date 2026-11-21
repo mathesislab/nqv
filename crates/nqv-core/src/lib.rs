@@ -1,6 +1,7 @@
 //! nqv-core: data access and view extraction. No display code.
 
 mod catalog;
+mod coast;
 mod contour;
 mod geo;
 mod graticule;
@@ -17,6 +18,7 @@ pub use crate::catalog::{
     Catalog, DirEntry, Grid, Other, Show, Source, VarRef, is_data, is_netcdf, list_dir,
     netcdf_files,
 };
+pub use crate::coast::coastlines;
 pub use crate::contour::{
     ContourLine, ContourSpec, Levels, Segment, check_contour, contours, nice_ticks,
 };

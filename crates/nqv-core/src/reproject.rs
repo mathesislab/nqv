@@ -132,7 +132,7 @@ pub(crate) fn lookup(cat: &Catalog, spec: &ViewSpec) -> Result<Arc<Lookup>> {
 
 /// A coordinate axis of a grid: cell centres, uniform or not, monotonic; a longitude
 /// axis around the globe wraps.
-struct Axis {
+pub(crate) struct Axis {
     v: Vec<f64>,
     uniform: Option<(f64, f64)>,
     /// Longitudes: values are brought within 180 degrees of this centre first.
@@ -141,7 +141,7 @@ struct Axis {
 }
 
 impl Axis {
-    fn new(v: &[f64], lon: bool) -> Self {
+    pub(crate) fn new(v: &[f64], lon: bool) -> Self {
         let n = v.len();
         let d = if n > 1 {
             (v[n - 1] - v[0]) / (n - 1) as f64
@@ -163,7 +163,7 @@ impl Axis {
     }
 
     /// Fractional cell index of `value` (cells cover index ± 0.5); None outside.
-    fn frac(&self, value: f64) -> Option<f64> {
+    pub(crate) fn frac(&self, value: f64) -> Option<f64> {
         let n = self.v.len();
         let value = match self.lon_centre {
             Some(c) => c + (value - c + 180.0).rem_euclid(360.0) - 180.0,
