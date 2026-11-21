@@ -120,3 +120,13 @@ fn coastlines_on_and_off() {
     assert!(s.command_line().contains("--coast off"));
     assert!(parse("coast maybe").is_err());
 }
+
+#[test]
+fn contour_labels_on_and_off() {
+    let mut s = yelmo();
+    s.apply(parse("labels off").unwrap()).unwrap();
+    assert!(!s.labels);
+    assert!(s.command_line().contains("--labels off"));
+    s.apply(parse("labels").unwrap()).unwrap();
+    assert!(s.labels && !s.command_line().contains("--labels"));
+}

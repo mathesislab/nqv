@@ -170,7 +170,7 @@ impl Session {
                     ylabel,
                     norm,
                     cmap,
-                    contours: &m.contours,
+                    contours: if s.labels { &m.contours } else { &[] },
                     extend: nqv_core::finite_range(&m.raster.values)
                         .map_or((false, false), |(lo, hi)| extends(&norm, lo, hi)),
                 })

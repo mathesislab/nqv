@@ -99,6 +99,8 @@ pub struct Session {
     pub target: Option<Target>,
     /// Coastlines over maps whose geography is known.
     pub coast: bool,
+    /// Values written on contour lines (desktop app, PNGs).
+    pub labels: bool,
 }
 
 impl Session {
@@ -133,6 +135,7 @@ impl Session {
             region: None,
             target: None,
             coast: true,
+            labels: true,
         };
         s.reset()?;
         Ok(s)
@@ -566,6 +569,7 @@ impl Session {
             Command::Zoom(z) => self.set_zoom(z)?,
             Command::Proj(p) => self.set_proj(p)?,
             Command::Coast(on) => self.coast = on,
+            Command::Labels(on) => self.labels = on,
             Command::Recipe(name) => {
                 for c in self.recipe(&name)? {
                     self.apply(c)?;
@@ -971,6 +975,9 @@ impl Session {
         }
         if !self.coast {
             add("coast", "off".into(), "--coast", "off".into());
+        }
+        if !self.labels {
+            add("labels", "off".into(), "--labels", "off".into());
         }
         if let Some(t) = &self.target {
             add("proj", t.proj.text(), "--proj", t.proj.text());

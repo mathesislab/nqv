@@ -223,6 +223,9 @@
           </select>
         </label>
       {/if}
+      {#if view.kind === "map" && view.contour}
+        <button class:on={view.labels} onclick={() => run(`labels ${view?.labels ? "off" : "on"}`)} title="Values on the contour lines">labels</button>
+      {/if}
       {#if view.kind === "map" && view.centre}
         <button class:on={view.coast} onclick={() => run(`coast ${view?.coast ? "off" : "on"}`)} title="Coastlines">coast</button>
       {/if}

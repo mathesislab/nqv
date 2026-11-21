@@ -109,6 +109,8 @@ pub struct ViewState {
     pub centre: Option<(f64, f64)>,
     /// Coastlines on (where the geography is known).
     pub coast: bool,
+    /// Values written on contour lines.
+    pub labels: bool,
     pub probe: Option<ProbeView>,
     pub command_line: String,
 }
@@ -187,6 +189,7 @@ pub fn state(s: &Session) -> ViewState {
             _ => None,
         },
         coast: s.coast,
+        labels: s.labels,
         probe: s.probe_info().map(|p| ProbeView {
             cell: p.cell,
             coords: p.coords,
@@ -324,7 +327,10 @@ pub fn map(s: &Session, w: u32, h: u32) -> Result<(Vec<u8>, ViewSpec)> {
             .iter()
             .flat_map(|l| l.segments.iter().flat_map(|[a, b]| [a.0, a.1, b.0, b.1]))
             .collect(),
-        labels: nqv_session::png::contour_labels(&m.contours, m.raster.w, m.raster.h),
+        labels: match s.labels {
+            true => nqv_session::png::contour_labels(&m.contours, m.raster.w, m.raster.h),
+            false => vec![],
+        },
         coast: m
             .coast
             .iter()

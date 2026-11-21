@@ -47,6 +47,7 @@ export type ViewState = {
   proj: string | null;
   centre: [number, number] | null;
   coast: boolean;
+  labels: boolean;
   probe: ProbeView | null;
   command_line: string;
 };

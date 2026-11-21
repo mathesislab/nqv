@@ -38,6 +38,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "hide where all conditions hold; OP = != < <= > >=",
     ),
     (
+        "labels on | off",
+        "--labels off",
+        "values written on contour lines, in the desktop app and PNGs (on by default)",
+    ),
+    (
         "coast on | off",
         "--coast off",
         "coastlines over maps whose geography is known (on by default)",
@@ -120,6 +125,8 @@ pub enum Command {
     Proj(Option<Projection>),
     /// Coastlines on or off.
     Coast(bool),
+    /// Contour labels on or off.
+    Labels(bool),
     /// Apply the recipe of this name (or path).
     Recipe(String),
     /// Save the current settings as a recipe of this name.
@@ -173,7 +180,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | zoom DIM=A:B ..|off | proj SPEC|native | coast on|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | zoom DIM=A:B ..|off | proj SPEC|native | coast on|off | labels on|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -189,6 +196,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "zoom" => parse_zoom(arg).map(Command::Zoom),
         "proj" => parse_proj(arg).map(Command::Proj),
         "coast" => parse_on_off("coast", arg).map(Command::Coast),
+        "labels" => parse_on_off("labels", arg).map(Command::Labels),
         "recipe" if !arg.is_empty() => Ok(Command::Recipe(arg.to_string())),
         "save" if !arg.is_empty() => Ok(Command::Save(arg.to_string())),
         "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),

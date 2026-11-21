@@ -53,6 +53,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
 | `:zoom DIM=A:B [DIM=A:B]`, `off` | `--zoom "lat=50:80 lon=@1:@200"` | part of the map: coordinate values or `@` indices per map dimension; in a projection `x=A:B y=C:D` (km) or `lon=A:B lat=C:D` |
 | `:proj SPEC`, `native` | `--proj SPEC` | maps in a projection (see below) |
+| `:labels on\|off` | `--labels off` | values written on contour lines (desktop app, PNGs; on by default) |
 | `:coast on\|off` | `--coast off` | coastlines over maps whose geography is known (on by default) |
 | `:recipe NAME` | `-r NAME` | apply a recipe (see below); `nqv --recipes` lists them |
 | `:save NAME` | | save the current settings as a recipe |
