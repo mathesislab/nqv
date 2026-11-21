@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use nqv_core::{
@@ -24,6 +24,16 @@ use crate::message::{Envelope, Request, Response};
 pub const DEFAULT_REMOTE_CMD: &str =
     "command -v nqv >/dev/null 2>&1 && exec nqv serve --stdio || exec ~/bin/nqv serve --stdio";
 
+/// How ssh may ask for what it needs to log in (passwords, passphrases, new host keys).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+    /// On the terminal, as usual.
+    Terminal,
+    /// Never: an app without a terminal (the desktop window). ssh fails at once instead
+    /// of waiting for an answer, and its message becomes the error.
+    Batch,
+}
+
 /// A connection to a server: its streams and, over ssh, the ssh process.
 pub struct Connection {
     r: Box<dyn Read + Send>,
@@ -38,22 +48,67 @@ pub struct Connection {
 
 impl Connection {
     /// Start `cmd` (default `DEFAULT_REMOTE_CMD`) on `host` with ssh and shake hands.
-    /// ssh asks for passwords or keys on the terminal, as usual.
-    pub fn ssh(host: &str, cmd: Option<&str>) -> Result<Self> {
-        let mut child = Command::new("ssh")
-            .arg("-T")
+    pub fn ssh(host: &str, cmd: Option<&str>, prompt: Prompt) -> Result<Self> {
+        let mut ssh = Command::new("ssh");
+        ssh.arg("-T");
+        if prompt == Prompt::Batch {
+            ssh.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]);
+        }
+        let mut child = ssh
             .arg(host)
             .arg(cmd.unwrap_or(DEFAULT_REMOTE_CMD))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(match prompt {
+                Prompt::Terminal => Stdio::inherit(),
+                Prompt::Batch => Stdio::piped(),
+            })
             .spawn()
             .context("starting ssh")?;
+        // Without a terminal, ssh's messages are kept for the error.
+        let said = Arc::new(Mutex::new(String::new()));
+        let reader = child.stderr.take().map(|mut e| {
+            let said = said.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 1024];
+                while let Ok(n @ 1..) = e.read(&mut buf) {
+                    said.lock()
+                        .expect("ssh messages lock")
+                        .push_str(&String::from_utf8_lossy(&buf[..n]));
+                }
+            })
+        });
         let r = BufReader::new(child.stdout.take().expect("piped stdout"));
         let w = BufWriter::new(child.stdin.take().expect("piped stdin"));
-        let mut c = Self::over(Box::new(r), Box::new(w), host)?;
-        c.child = Some(child);
-        Ok(c)
+        match Self::over(Box::new(r), Box::new(w), host) {
+            Ok(mut c) => {
+                c.child = Some(child);
+                Ok(c)
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(t) = reader {
+                    let _ = t.join();
+                }
+                let said = said.lock().expect("ssh messages lock");
+                let said = said.trim();
+                if said.is_empty() {
+                    return Err(e);
+                }
+                let login = ["Permission denied", "Host key verification failed"]
+                    .iter()
+                    .any(|m| said.contains(m));
+                let hint = if login {
+                    "\n(without a terminal ssh cannot ask for a password or passphrase, or \
+                     whether to trust a new host: use a key in ssh-agent (ssh-add), and log \
+                     in once from a terminal)"
+                } else {
+                    ""
+                };
+                Err(e.context(format!("ssh {host}: {said}{hint}")))
+            }
+        }
     }
 
     /// A connection over the given streams; shakes hands.

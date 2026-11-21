@@ -10,7 +10,7 @@ pub mod server;
 
 pub use crate::message::{Envelope, Request, Response};
 pub use crate::raster::EncodedRaster;
-pub use crate::remote::{Connection, DEFAULT_REMOTE_CMD, Remote};
+pub use crate::remote::{Connection, DEFAULT_REMOTE_CMD, Prompt, Remote};
 pub use crate::server::serve;
 
 /// Protocol version; client and server must agree.

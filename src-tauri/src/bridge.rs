@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use nqv_core::{Kind, Region, Show, ViewSpec, finite_range};
-use nqv_proto::{Connection, Remote};
+use nqv_proto::{Connection, Prompt, Remote};
 use nqv_render::{CMAPS, MISSING, extends};
 use nqv_session::command::RangeMode;
 use nqv_session::{OpenMode, Origin, Session};
@@ -37,7 +37,7 @@ pub fn open(req: OpenRequest) -> Result<Session> {
     match req.host.filter(|h| !h.is_empty()) {
         None => Session::open(&req.paths, &mode),
         Some(h) => {
-            let conn = Connection::ssh(&h, None)?;
+            let conn = Connection::ssh(&h, None, Prompt::Batch)?;
             let origin = Origin {
                 paths: req.paths.clone(),
                 mode: mode.clone(),

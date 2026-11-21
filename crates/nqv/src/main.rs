@@ -14,7 +14,7 @@ use crossterm::execute;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 use crate::app::App;
-use nqv_proto::{Connection, Remote};
+use nqv_proto::{Connection, Prompt, Remote};
 use nqv_session::command::{self, Command};
 use nqv_session::recipe;
 use nqv_session::{OpenMode, Origin, Session};
@@ -268,7 +268,7 @@ fn main() -> Result<()> {
             let session = match &host {
                 None => Session::open(&paths, &mode)?,
                 Some(h) => {
-                    let conn = Connection::ssh(h, args.remote_cmd.as_deref())?;
+                    let conn = Connection::ssh(h, args.remote_cmd.as_deref(), Prompt::Terminal)?;
                     let origin = Origin {
                         paths: paths.clone(),
                         mode: mode.clone(),

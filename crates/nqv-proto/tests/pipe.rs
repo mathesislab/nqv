@@ -121,3 +121,16 @@ fn errors_and_reopening_travel() {
     rem.reopen(&[small()], &OpenMode::default()).unwrap();
     assert!(!rem.info().compare);
 }
+
+#[test]
+fn ssh_without_a_terminal_says_why() {
+    // ssh's own message becomes the error (needs ssh installed; .invalid never resolves)
+    let e = Connection::ssh("nqv-test.invalid", None, nqv_proto::Prompt::Batch)
+        .err()
+        .expect("no such host");
+    let e = format!("{e:#}");
+    assert!(
+        e.contains("ssh nqv-test.invalid:") && e.contains("resolve"),
+        "{e}"
+    );
+}
