@@ -21,6 +21,8 @@
   let opening = $state(false);
   let cmdline: string | null = $state(null);
   let cmdInput: HTMLInputElement | undefined = $state();
+  let update: string | null = $state(null);
+  let installing: string | null = $state(null);
 
   // The window stays hidden till its first page is drawn (no half-drawn page on Linux):
   // a map once MapView has drawn it, anything else at once.
@@ -32,6 +34,7 @@
   }
 
   onMount(async () => {
+    api.onUpdate((v) => (update = v));
     colormaps = await api.colormaps();
     try {
       view = await api.state();
@@ -75,6 +78,18 @@
     const path = await save({ defaultPath: `${view?.var ?? "nqv"}.png`, filters: [{ name: "PNG", extensions: ["png"] }] });
     if (!path) return;
     try { message = await api.savePng(path, 1600, 1100); } catch (e) { error = String(e); }
+  }
+
+  async function installUpdate() {
+    installing = "downloading";
+    try {
+      await api.installUpdate((done, total) => {
+        installing = total ? `${Math.round((100 * done) / total)} %` : `${(done / 1e6).toFixed(1)} MB`;
+      });
+    } catch (e) {
+      error = `update: ${e}`;
+      installing = null;
+    }
   }
 
   async function copyCommand() {
@@ -165,6 +180,12 @@
       <span class="spacer"></span>
       <button onclick={copyCommand} title="Copy the command line for this view (p)">copy command</button>
       <button onclick={savePng}>Save PNG…</button>
+    {/if}
+    {#if update}
+      {#if !view}<span class="spacer"></span>{/if}
+      <button class="primary" disabled={installing !== null} onclick={installUpdate} title="Install and restart">
+        {installing ? `updating… ${installing}` : `nqv ${update} available · Install`}
+      </button>
     {/if}
   </header>
 

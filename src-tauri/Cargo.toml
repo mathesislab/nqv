@@ -23,3 +23,4 @@ nqv-render = { version = "0.1.0", path = "../crates/nqv-render" }
 nqv-session = { version = "0.1.0", path = "../crates/nqv-session" }
 nqv-proto = { version = "0.1.0", path = "../crates/nqv-proto" }
 anyhow = "1.0.104"
+tauri-plugin-updater = "2"

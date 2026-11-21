@@ -2,6 +2,7 @@
 //! commands here are thin: `bridge` does the work, the session holds the state.
 
 mod bridge;
+mod update;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -83,6 +84,17 @@ fn prepare_window(app: &AppHandle) {
         let h = app.clone();
         let _ = app.run_on_main_thread(move || show(&h));
     });
+}
+
+/// The update found, if any.
+#[tauri::command]
+fn update_available(app: AppHandle) -> Option<String> {
+    update::available(&app)
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Res<()> {
+    update::install(&app).await
 }
 
 #[tauri::command]
@@ -252,14 +264,19 @@ fn opened_from_args() -> App {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::Updates::default())
         .manage(opened_from_args())
         .setup(|app| {
             prepare_window(app.handle());
+            update::watch(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             version,
             ready,
+            update_available,
+            install_update,
             open,
             state,
             apply,

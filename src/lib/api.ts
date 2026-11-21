@@ -1,6 +1,7 @@
 // The front end's view of an nqv session. One interface, so the same components run
 // in the desktop app (Tauri commands) and, later, in a browser (a WebSocket).
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export type Region = { y0: number; y1: number; x0: number; x1: number };
 
@@ -112,6 +113,10 @@ export type OpenRequest = {
 export interface Api {
   /** Show the window, once its first page is drawn. */
   ready(): Promise<void>;
+  /** The version of an update found, and later ones as they are found. */
+  onUpdate(f: (version: string | null) => void): Promise<void>;
+  /** Install the update found and restart; `progress` gets the bytes so far and in all. */
+  installUpdate(progress: (done: number, total: number | null) => void): Promise<void>;
   open(req: OpenRequest): Promise<[ViewState, string | null]>;
   state(): Promise<ViewState>;
   apply(line: string): Promise<[ViewState, string | null]>;
@@ -150,6 +155,18 @@ export const tauriApi: Api = {
   setVar: (source, name) => invoke("set_var", { source, name }),
   vars: (query) => invoke("vars", { query }),
   ready: () => invoke("ready"),
+  onUpdate: async (f) => {
+    await listen<string | null>("update", (e) => f(e.payload));
+    f(await invoke("update_available"));
+  },
+  installUpdate: async (progress) => {
+    const stop = await listen<[number, number | null]>("update-progress", (e) => progress(...e.payload));
+    try {
+      await invoke("install_update");
+    } finally {
+      stop();
+    }
+  },
   colormaps: () => invoke("colormaps"),
   map: async (w, h) => decodeMap(await invoke<ArrayBuffer>("map", { w, h })),
   series: (points) => invoke("series", { points }),

@@ -37,7 +37,16 @@
     ],
     "macOS": {
       "signingIdentity": "-"
-    }
+    },
+    "createUpdaterArtifacts": true
   },
-  "mainBinaryName": "nqv-desktop"
+  "mainBinaryName": "nqv-desktop",
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4Q0M4NTdFNkU1OTVGMDcKUldRSFgxbHVmb1hNV003eVcxOHBOKzJhM2E2SXk0d1hNQjVmWHdLVURrdGZ0VWZYK3lzUUhHWlgK",
+      "endpoints": [
+        "https://github.com/mathesislab/nqv/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }
