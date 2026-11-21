@@ -34,6 +34,9 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:range MIN MAX`, `auto`, `sym` | `--range MIN,MAX` | colour range (y range for line plots) |
 | `:cmap NAME` | `--cmap NAME` | colour map: viridis, RdBu_r, grays |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
+| `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
+| `:recipe NAME` | `-r NAME` | apply a recipe (see below); `nqv --recipes` lists them |
+| `:save NAME` | | save the current settings as a recipe |
 | `:show diff\|a\|b` | `--show diff\|a\|b` | comparison side |
 | | `--png FILE [--size WxH]` | write the view to a PNG without the viewer: a map with axes and colour bar, or a line plot |
 
@@ -63,6 +66,22 @@ Masks hide values where conditions on other variables hold:
 :mask H_ice < 10 and z_bed > 0   also <= > >=; and: hide where all conditions hold
 :mask off
 ```
+
+Contours are drawn over maps: about 10 round levels by default, or `step=500`, `n=5`, `levels=0,1000,2000`. The contoured variable must be on the same grid; contours follow the mask. Lines are black or white, whichever contrasts with the colour underneath; in half-block terminals cells crossed by a line show it as braille dots.
+
+### Recipes
+
+A recipe is a file of viewer commands, one per line (`#` comments), in `~/.nqv/recipes/NAME`:
+
+```
+# Ice sheet: surface velocity on the ice, surface elevation contours
+v ice_NH-16KM.nc:uxy_s
+mask f_ice < 0.5
+contour z_srf step=500
+range 0 300
+```
+
+`nqv -r ice run/` applies it after opening the paths; options on the command line are applied after the recipe and override it. Works with `--png`, `-j`, `--vs`. In the viewer, `:recipe ice` applies it and `:save NAME` writes the current settings as a recipe.
 
 The mask variable is looked up by exact name in the current file, then in the other files; `file.nc:var` names the file. It must lie on the same grid; dimensions it shares with the shown variable (such as time) follow the current step. The colour range covers visible values only.
 
