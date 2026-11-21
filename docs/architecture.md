@@ -42,15 +42,17 @@ The `Raster` (values + mask on the view's pixel grid) is the common format for a
 
 Chosen at start-up by querying the terminal; `--gfx=kitty|sixel|iterm|blocks|blocks256` overrides.
 
-| Tier | Resolution | Notes |
+| Tier | Resolution | Terminals (checked 2026-11) |
 |---|---|---|
-| kitty graphics | full pixels | Ghostty, kitty, WezTerm, Konsole (partial) |
-| sixel | full pixels | iTerm2, WezTerm, foot, xterm (configured), Windows Terminal, VS Code (setting) |
-| iTerm2 inline | full pixels | iTerm2, WezTerm |
-| half-block `▀`, 24-bit | 2 px per cell | nearly every terminal; survives tmux/screen |
-| half-block, 256 colour | 2 px per cell | fallback |
+| kitty graphics | full pixels | Ghostty, kitty, WezTerm, Konsole (partial), iTerm2 (partial) |
+| sixel | full pixels | iTerm2, WezTerm, Konsole, foot, Windows Terminal ≥ 1.22, xterm (only as VT340), VS Code (setting off by default) |
+| iTerm2 inline | full pixels | iTerm2, WezTerm, Konsole, VS Code (same setting) |
+| half-block `▀`, 24-bit | 2 px per cell | everything else with true colour, incl. Terminal.app (macOS 26+) and GNOME Terminal |
+| half-block, 256 colour | 2 px per cell | older Terminal.app and anything else |
 
-The half-block tier is the guaranteed path and is a first-class target, not a degraded mode. Line plots (1D variables) draw with braille characters in every tier. Support per terminal is still to be verified (see Open questions).
+The half-block tier is the guaranteed path and a first-class target, not a degraded mode. Two common terminals have no image protocol at all: Terminal.app and GNOME Terminal (VTE builds sixel only if compiled with it; major distros don't). Under tmux, half-blocks are the only reliable tier: sixel needs a tmux built with image support, and kitty graphics only work through DCS passthrough, where they break when panes move. Line plots (1D variables) draw with braille characters in every tier.
+
+`ratatui-image` (11.x) already implements kitty, sixel, iTerm2 and half-blocks, with detection via `Picker::from_query_stdio()`.
 
 ## Data model
 
@@ -93,7 +95,7 @@ Navigation lives in the core and the protocol, so every front end can change fil
 - `nqv file.nc [var]`, `nqv run/*.nc`, `nqv .` (collection), `nqv` (browser on cwd).
 - `nqv f.nc temp -t -1 -z 100 --region arctic`: jump straight to a view. Every view can print the command line that reproduces it.
 - Opener for `.nc` in yazi/lf/ranger; target for fzf.
-- **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Requires `AllowStreamLocalForwarding` on the cluster; to verify.)
+- **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Works on Albedo and Levante; see Verified.)
 - `nqv serve --stdio`: for clients that start the server themselves over `ssh host nqv serve --stdio`.
 
 ## Core API (sketch)
@@ -152,12 +154,22 @@ ice:H_ice  t=124/501  [0, 3500] viridis
 - Mesh-on-GPU wire format (design 3) for zooming into very large unstructured meshes.
 - Zarr and plain HDF5 sources.
 
+## Verified (2026-11-21)
+
+- **Socket forwarding works on Albedo (albedo0) and Levante.** Tested end to end: `ssh -o StreamLocalBindUnlink=yes -R <remote.sock>:<local.sock>` created a `srw-------` socket in the HPC home folder, and a message sent from the HPC arrived on the laptop.
+  - Login nodes share home folders but sockets are node-local. A socket path in `$HOME` is visible from a session on another login node but can't be connected to there, so `nqv` must try to connect and fall back to the terminal, not just check the file exists.
+  - Several ssh sessions to the same host share one forwarded path. That is fine: they all lead to the same laptop agent.
+- **NetCDF reading.** Two options:
+  - `netcdf` crate (0.12.1): bindings to netcdf-c. A `static` feature builds netcdf-c, HDF5 and zlib from source (needs cmake and a C++ compiler). Every call goes through a global mutex, because netcdf-c is not thread-safe. Its static build disables filter plugins, so zstd-compressed variables are probably unreadable that way.
+  - `netcdf-reader` (0.13.0, pure Rust, with sibling `hdf5-reader`): reads CDF-1/2/5 and NetCDF-4 with chunking, deflate, shuffle, lz4, szip, scale-offset, and does CF unpacking and masking. No zstd. Very young (first release 2026-03, 13 minor versions since), so expect API churn.
+  - The CLIMBER-X reference files use chunked storage with deflate level 1 + shuffle, which `netcdf-reader` supports. Albedo's netcdf-c 4.8.1 predates zstd support (4.9.0), so files written with it can't be zstd anyway.
+  - Decision proposed: `nqv-core` reads through a `Reader` trait (needed anyway for Zarr later). First implementation: `netcdf-reader`, for a fully static musl binary and parallel reads. Test it on CLIMBER-X, Yelmo and FESOM output before committing to it.
+
 ## Open questions
 
-- Pure-Rust NetCDF-4 reader (static musl binary) vs. the `netcdf` crate linking libnetcdf/HDF5.
-- Actual terminal support for each output tier, including tmux behaviour.
-- Whether Albedo and Levante allow Unix-socket forwarding (`AllowStreamLocalForwarding`).
+- `netcdf-reader` on large real files: correctness, speed, memory (spike step 1).
 - Rules for auto-detecting "stitch along time" versus "collection" for a set of files; `--stitch` / `--collection` as overrides.
+- Socket path for the handoff: node-local (`/tmp/nqv-%r.sock`) or in `$HOME` with connect-and-fall-back.
 
 ## Build order
 
