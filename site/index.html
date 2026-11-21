@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nqv</title>
+<meta name="description" content="A quick-look viewer for NetCDF model output: maps and series in any terminal over plain ssh, or in a desktop window that reads the files where they are.">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#"><img src="images/logo.svg" alt="" width="28" height="28">nqv</a>
+  <nav>
+    <a href="#terminal">Terminal</a>
+    <a href="#desktop">Desktop</a>
+    <a href="#command-line">Command line</a>
+    <a href="#download">Download</a>
+    <a href="https://github.com/mathesislab/nqv">Source</a>
+  </nav>
+</header>
+
+<main>
+<section class="hero">
+  <h1>Look at model output where it is</h1>
+  <p class="lead">nqv shows the maps and series of NetCDF files, fast, in any terminal over plain ssh, or in a
+    desktop window that reads the files on the cluster. Step through time, click a cell for its series, mask,
+    contour, compare two runs; whatever you see can be repeated as one command line or saved as a PNG.</p>
+  <p class="actions">
+    <a class="button primary" href="https://github.com/mathesislab/nqv/releases/latest/download/nqv-desktop-macos-aarch64.dmg">Download for Mac</a>
+    <a class="button" href="#download">Linux and HPC</a>
+    <a class="button" href="https://github.com/mathesislab/nqv">View source</a>
+  </p>
+  <p class="more">Desktop app for macOS (Apple silicon) and Linux; terminal viewer for Linux (x86-64, ARM) and
+    macOS. <a href="https://github.com/mathesislab/nqv/releases">All releases</a></p>
+
+  <img src="images/desktop.png" alt="The desktop app on Linux: ice surface velocity of a CLIMBER-X run on a log scale, masked outside the ice, with surface elevation contours" width="1280" height="860">
+</section>
+
+<section class="features">
+  <article id="terminal" class="feature wide">
+    <div>
+      <h2>In any terminal, over ssh</h2>
+      <p><code>nqv run/</code> on the login node opens the folder's files: arrows step through time and levels,
+        <code>v</code> picks a variable by a few letters, a click gives a cell's value and its series. Maps are drawn
+        with the terminal's image protocol where there is one (kitty, iTerm2, WezTerm, sixel), else with coloured
+        half-blocks, so it works in Terminal.app and under tmux.</p>
+      <p>One static binary, no libraries to load: copy it to <code>~/bin</code>. Files are read a slice at a
+        time, only as much as the screen shows.</p>
+    </div>
+    <img src="images/terminal.png" alt="The terminal viewer in an xterm: the same map in coloured half-blocks, contours as braille dots, statistics at the side" loading="lazy" width="1348" height="873">
+  </article>
+
+  <article id="desktop" class="feature wide reverse">
+    <div>
+      <h2>A window on files anywhere</h2>
+      <p>The desktop app draws maps at the screen's full resolution: the wheel zooms around the pointer, a drag
+        pans, a click shows the series below the map. Open local files, or <code>albedo0:/path/to/run</code>: nqv
+        starts itself on the host over ssh and only screen-sized maps cross the network, so a 100 MB file opens in
+        seconds.</p>
+      <p>The terminal viewer does the same with <code>nqv HOST:PATH</code>, drawing on your laptop's terminal.</p>
+    </div>
+    <img src="images/png.png" alt="A PNG written by nqv --png: the map with axes, colour bar, contour labels" loading="lazy" width="780" height="800">
+  </article>
+
+  <article id="command-line" class="feature">
+    <h2>Everything on the command line</h2>
+    <p>Every setting is a flag and a <code>:</code> command, and <code>p</code> prints the command line of the
+      view you have. <code>--png</code> writes the view to a file without opening anything, for scripts and
+      notebooks:</p>
+    <pre><code>nqv run/ice_NH-16KM.nc -v uxy_s --mask "f_ice &lt; 0.5" \
+    --contour "z_srf step=500" --range log,1,3000 --png velocity.png</code></pre>
+  </article>
+
+  <div class="grid">
+    <article class="feature">
+      <h3>Compare runs</h3>
+      <p><code>--diff run1/ run2/</code> shows A − B for the files of the same name, or A and B in one colour
+        range.</p>
+    </article>
+    <article class="feature">
+      <h3>Masks and contours</h3>
+      <p>Hide cells by other variables (<code>H_ice &lt; 10 and z_bed &gt; 0</code>); draw contours of another
+        variable, labelled in PNGs.</p>
+    </article>
+    <article class="feature">
+      <h3>Recipes</h3>
+      <p>A view you use often as a few lines in <code>~/.nqv/recipes</code>: <code>nqv -r ice run/</code>.</p>
+    </article>
+    <article class="feature">
+      <h3>Joined files</h3>
+      <p><code>-j run/seg*</code> reads a run written in pieces as one time axis.</p>
+    </article>
+    <article class="feature">
+      <h3>Statistics</h3>
+      <p>Minimum, mean, maximum of the map shown, weighted by cell area or latitude.</p>
+    </article>
+    <article class="feature">
+      <h3>Colour-blind mode</h3>
+      <p>Perceptual colour maps by default; <code>--cvd</code> offers only those that suit colour vision
+        deficiencies.</p>
+    </article>
+  </div>
+</section>
+
+<section id="download" class="download">
+  <h2>Download</h2>
+  <div class="platforms">
+    <article class="platform">
+      <h3>Desktop, macOS</h3>
+      <p>For Macs with Apple silicon.</p>
+      <a class="button primary" href="https://github.com/mathesislab/nqv/releases/latest/download/nqv-desktop-macos-aarch64.dmg">Download for Mac</a>
+      <details>
+        <summary>First start</summary>
+        <p>nqv is not notarized by Apple yet, so macOS blocks it the first time. Drag it to Applications and open
+          it; then open System Settings → Privacy &amp; Security and click Open Anyway. Or, in Terminal:</p>
+        <pre><code>xattr -dr com.apple.quarantine /Applications/nqv.app</code></pre>
+      </details>
+    </article>
+    <article class="platform">
+      <h3>Desktop, Linux</h3>
+      <p>For x86-64: an AppImage, which updates itself, or a <code>.deb</code>.</p>
+      <a class="button primary" href="https://github.com/mathesislab/nqv/releases/latest/download/nqv-desktop-linux-amd64.AppImage">Download AppImage</a>
+      <a class="button" href="https://github.com/mathesislab/nqv/releases/latest/download/nqv-desktop-linux-amd64.deb">.deb</a>
+      <details>
+        <summary>First start</summary>
+        <pre><code>chmod +x nqv-desktop-linux-amd64.AppImage
+./nqv-desktop-linux-amd64.AppImage</code></pre>
+        <p>A blank window on NVIDIA's driver: start it with <code>WEBKIT_DISABLE_DMABUF_RENDERER=1</code>.</p>
+      </details>
+    </article>
+    <article class="platform full">
+      <h3>Terminal viewer</h3>
+      <p>One file, nothing to install. On an HPC system or any Linux (x86-64; <code>nqv-linux-aarch64</code> for
+        ARM):</p>
+      <pre><code>mkdir -p ~/bin
+curl -L -o ~/bin/nqv https://github.com/mathesislab/nqv/releases/latest/download/nqv-linux-x86_64
+chmod +x ~/bin/nqv</code></pre>
+      <p>On a Mac, <code>nqv-macos-aarch64</code> the same way.</p>
+    </article>
+  </div>
+  <p class="more">Opening files on a host needs ssh to log in without a prompt (a key in ssh-agent) and nqv on the
+    host, of the same version. The desktop app updates itself when you ask. All versions are on the
+    <a href="https://github.com/mathesislab/nqv/releases">releases page</a>; to build it yourself, see the
+    <a href="https://github.com/mathesislab/nqv#readme">README</a>.</p>
+</section>
+</main>
+
+<footer>
+  <p>nqv is free software under the <a href="https://github.com/mathesislab/nqv/blob/main/LICENSE">MIT license</a>,
+    by Alexander Robinson. <a href="https://github.com/mathesislab/nqv">GitHub</a></p>
+</footer>
+</body>
+</html>

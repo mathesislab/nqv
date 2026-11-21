@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<defs>
+<clipPath id="tile"><rect width="1024" height="1024" rx="230"/></clipPath>
+<radialGradient id="rings" cx="512" cy="512" r="170" gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+<stop offset="0" stop-color="#fde725"/>
+<stop offset="0.25" stop-color="#5ec962"/>
+<stop offset="0.5" stop-color="#21918c"/>
+<stop offset="0.75" stop-color="#3b528b"/>
+<stop offset="1" stop-color="#440154"/>
+</radialGradient>
+</defs>
+<rect width="1024" height="1024" fill="url(#rings)" clip-path="url(#tile)"/>
+</svg>
