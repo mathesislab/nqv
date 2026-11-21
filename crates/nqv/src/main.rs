@@ -79,6 +79,14 @@ struct Args {
         help_heading = "View"
     )]
     mask: Option<String>,
+    /// Part of the map: "DIM=A:B [DIM=A:B]" per map dimension, values or @indices
+    #[arg(
+        long,
+        value_name = "RANGES",
+        allow_hyphen_values = true,
+        help_heading = "View"
+    )]
+    zoom: Option<String>,
     /// Contour lines of another variable: "VAR [step=S | n=N | levels=A,B,..]"
     #[arg(
         long,
@@ -348,6 +356,9 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
     }
     if let Some(c) = &args.contour {
         cmds.push(Command::Contour(command::parse_contour(c)?));
+    }
+    if let Some(z) = &args.zoom {
+        cmds.push(Command::Zoom(command::parse_zoom(z)?));
     }
     Ok(cmds)
 }

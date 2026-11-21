@@ -24,7 +24,7 @@ use crate::ui;
 
 /// What the main area shows for one state and screen area.
 pub enum Plot {
-    Map(Map),
+    Map(Box<Map>),
     Line(Series),
     Scalar(f32),
     Error(String),
@@ -452,6 +452,7 @@ impl App {
             }
             Output::Blocks { .. } => (area.width as u32, area.height as u32 * 2),
         };
+        let (ny, nx) = self.s.map_extent().unwrap_or((ny, nx));
         let size = fit_size(nx, ny, max_w, max_h);
         // Room for the statistics: beside the map when it leaves room, else one line below.
         let (cols, rows) = match out {
@@ -515,12 +516,12 @@ impl App {
                 }
             }
         };
-        let plot = Plot::Map(Map {
+        let plot = Plot::Map(Box::new(Map {
             image,
             spec: m.spec,
             rect,
             stats,
-        });
+        }));
         (plot, Some(m.range), Some(m.norm))
     }
 

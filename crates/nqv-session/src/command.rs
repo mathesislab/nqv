@@ -37,6 +37,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "hide where all conditions hold; OP = != < <= > >=",
     ),
     (
+        "zoom DIM=A:B [DIM=A:B] | off",
+        "--zoom \"...\"",
+        "part of the map: a range per map dimension (values or @indices)",
+    ),
+    (
         "contour VAR [step=S | n=N | levels=A,B,..] | off",
         "--contour \"...\"",
         "contour lines of VAR over the map (about 10 round levels by default)",
@@ -97,6 +102,8 @@ pub enum Command {
     Mask(Option<Vec<MaskCond>>),
     /// Contour lines of another variable; None removes them.
     Contour(Option<ContourCmd>),
+    /// Part of the map shown: a range of positions per map dimension; None shows all.
+    Zoom(Option<Vec<ZoomRange>>),
     /// Apply the recipe of this name (or path).
     Recipe(String),
     /// Save the current settings as a recipe of this name.
@@ -150,7 +157,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | interp nearest|bilinear | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | zoom DIM=A:B ..|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -163,6 +170,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "range" => parse_range(arg).map(Command::Range),
         "mask" => parse_mask(arg).map(Command::Mask),
         "contour" => parse_contour(arg).map(Command::Contour),
+        "zoom" => parse_zoom(arg).map(Command::Zoom),
         "recipe" if !arg.is_empty() => Ok(Command::Recipe(arg.to_string())),
         "save" if !arg.is_empty() => Ok(Command::Save(arg.to_string())),
         "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),
@@ -218,6 +226,36 @@ pub fn parse_range(arg: &str) -> Result<RangeMode, String> {
         },
         [a, b] => pair(a, b).map(|(a, b)| RangeMode::Fixed(a, b)),
         _ => Err(bad()),
+    }
+}
+
+/// A range along one map dimension: its name and the two ends.
+pub type ZoomRange = (String, TimeSel, TimeSel);
+
+/// `off`, or `DIM=A:B` per map dimension, each end a value or @index:
+/// `lat=60:90 lon=-80:-10`, `yc=@100:@300`.
+pub fn parse_zoom(arg: &str) -> Result<Option<Vec<ZoomRange>>, String> {
+    let arg = arg.trim();
+    if arg == "off" || arg == "none" {
+        return Ok(None);
+    }
+    let bad = |w: &str| format!("zoom: expected DIM=A:B (values or @indices) or off, got '{w}'");
+    let mut out = vec![];
+    for w in arg.split_whitespace() {
+        let (dim, range) = w.split_once('=').ok_or_else(|| bad(w))?;
+        let (a, b) = range.split_once(':').ok_or_else(|| bad(w))?;
+        let (a, b) = (
+            parse_time(a).map_err(|_| bad(w))?,
+            parse_time(b).map_err(|_| bad(w))?,
+        );
+        if dim.is_empty() {
+            return Err(bad(w));
+        }
+        out.push((dim.to_string(), a, b));
+    }
+    match out.is_empty() {
+        true => Err(bad(arg)),
+        false => Ok(Some(out)),
     }
 }
 
@@ -407,6 +445,20 @@ mod tests {
         assert_eq!(shell_quote("run/ice.nc"), "run/ice.nc");
         assert_eq!(shell_quote("H_ice < 10"), "'H_ice < 10'");
         assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn parses_zoom() {
+        assert_eq!(
+            parse("zoom lat=60:90 lon=@1:@-1"),
+            Ok(Command::Zoom(Some(vec![
+                ("lat".into(), TimeSel::Value(60.0), TimeSel::Value(90.0)),
+                ("lon".into(), TimeSel::Index(1), TimeSel::Index(-1)),
+            ])))
+        );
+        assert_eq!(parse("zoom off"), Ok(Command::Zoom(None)));
+        assert!(parse("zoom lat=60").is_err());
+        assert!(parse("zoom").is_err());
     }
 
     #[test]

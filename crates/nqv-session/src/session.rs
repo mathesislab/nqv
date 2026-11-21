@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use nqv_core::{
-    Cond, ContourLine, ContourSpec, Interp, Kind, Mask, RangeEstimate, Raster, Series, SeriesSpec,
-    Show, Stats, VarInfo, VarRef, ViewSpec,
+    Cond, ContourLine, ContourSpec, Interp, Kind, Mask, RangeEstimate, Raster, Region, Series,
+    SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
 };
 use nqv_render::{CMAPS, Norm, cmap_index};
 
 use crate::backend::{Backend, CatalogInfo, Local, OpenMode};
-use crate::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel};
+use crate::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel, ZoomRange};
 use crate::{fuzzy, recipe};
 
 /// The paths and mode the current files were opened with, for the command line that
@@ -87,6 +87,8 @@ pub struct Session {
     pub contour: Option<ContourCmd>,
     /// Clicked map cell (y, x).
     pub probe: Option<(usize, usize)>,
+    /// Part of the map shown; None for all of it.
+    pub region: Option<Region>,
 }
 
 impl Session {
@@ -118,6 +120,7 @@ impl Session {
             mask: vec![],
             contour: None,
             probe: None,
+            region: None,
         };
         s.reset()?;
         Ok(s)
@@ -163,10 +166,40 @@ impl Session {
     }
 
     pub fn set_var(&mut self, r: VarRef) {
-        let n = self.info().var(&r).map(|v| v.dims.len()).unwrap_or(0);
+        let map_dims = |v: &VarInfo| match v.kind() {
+            Kind::Map { y, x } => Some((v.dims[y].clone(), v.dims[x].clone())),
+            _ => None,
+        };
+        let old = self.info().var(&self.var).ok().and_then(map_dims);
+        let new = self.info().var(&r).ok();
+        let n = new.map(|v| v.dims.len()).unwrap_or(0);
+        // The zoom stays on the same grid, and goes with another.
+        if new.and_then(map_dims) != old {
+            self.region = None;
+        }
         self.var = r;
         self.index = vec![0; n];
         self.probe = None;
+    }
+
+    /// Map cells shown (rows, columns): the zoomed window, or the whole map.
+    pub fn map_extent(&self) -> Option<(usize, usize)> {
+        let v = self.var_info();
+        let Kind::Map { y, x } = v.kind() else {
+            return None;
+        };
+        Some(match self.region {
+            Some(r) => (
+                r.y1.min(v.dims[y].len).saturating_sub(r.y0).max(1),
+                r.x1.min(v.dims[x].len).saturating_sub(r.x0).max(1),
+            ),
+            None => (v.dims[y].len.max(1), v.dims[x].len.max(1)),
+        })
+    }
+
+    /// Zoom to a window of the map, or show all of it.
+    pub fn zoom(&mut self, region: Option<Region>) {
+        self.region = region;
     }
 
     /// Dimension of the series shown for a clicked cell: the one stepped first.
@@ -370,6 +403,7 @@ impl Session {
                 return Ok(self.cvd_warning());
             }
             Command::Contour(c) => self.contour = c,
+            Command::Zoom(z) => self.set_zoom(z)?,
             Command::Recipe(name) => {
                 for c in self.recipe(&name)? {
                     self.apply(c)?;
@@ -463,6 +497,43 @@ impl Session {
         Ok(())
     }
 
+    /// Zoom to ranges along the map dimensions (missing ones span the whole map).
+    fn set_zoom(&mut self, z: Option<Vec<ZoomRange>>) -> Result<(), String> {
+        let Some(ranges) = z else {
+            self.region = None;
+            return Ok(());
+        };
+        let v = self.var_info();
+        let Kind::Map { y, x } = v.kind() else {
+            return Err(format!("zoom: {} is not a map", v.name));
+        };
+        let (mut yr, mut xr) = ((0, v.dims[y].len), (0, v.dims[x].len));
+        for (dim, a, b) in ranges {
+            let Some(k) = [y, x].into_iter().find(|&k| v.dims[k].name == dim) else {
+                return Err(format!(
+                    "zoom: '{dim}' is not a map dimension of {} ({}, {})",
+                    v.name, v.dims[y].name, v.dims[x].name
+                ));
+            };
+            let d = &v.dims[k];
+            let coord = self.backend.coord(self.var.source, &d.name);
+            let i = |p| {
+                command::time_index(p, d.len, coord.as_deref())
+                    .map_err(|e| format!("zoom: {dim}: {e}"))
+            };
+            let (i0, i1) = (i(a)?, i(b)?);
+            let r = (i0.min(i1), i0.max(i1) + 1);
+            if k == y { yr = r } else { xr = r }
+        }
+        self.region = Some(Region {
+            y0: yr.0,
+            y1: yr.1,
+            x0: xr.0,
+            x1: xr.1,
+        });
+        Ok(())
+    }
+
     /// Variable named exactly `name` (or `file:name`), preferring the current file.
     fn resolve(&self, name: &str) -> Result<VarRef, String> {
         let info = self.info();
@@ -550,6 +621,7 @@ impl Session {
             size,
             mask: self.overlays().mask,
             interp: self.interp,
+            region: self.region,
         }
     }
 
@@ -562,6 +634,7 @@ impl Session {
             size,
             mask: o.mask,
             interp: self.interp,
+            region: self.region,
         };
         let p = self
             .backend
@@ -711,6 +784,18 @@ impl Session {
         }
         if self.interp == Interp::Bilinear {
             add("interp", "bilinear".into(), "--interp", "bilinear".into());
+        }
+        if let (Some(r), Kind::Map { y, x }) = (self.region, v.kind()) {
+            let z = format!(
+                "{}=@{}:@{} {}=@{}:@{}",
+                v.dims[y].name,
+                r.y0 + 1,
+                r.y1,
+                v.dims[x].name,
+                r.x0 + 1,
+                r.x1
+            );
+            add("zoom", z.clone(), "--zoom", z);
         }
         if let Some(c) = &self.contour {
             add("contour", c.text(), "--contour", c.text());

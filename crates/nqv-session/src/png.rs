@@ -87,7 +87,8 @@ impl Session {
         let img = match v.kind() {
             Kind::Map { y, x } => {
                 let area = map_area(max);
-                let size = fit_size(v.dims[x].len.max(1), v.dims[y].len.max(1), area.0, area.1);
+                let (ny, nx) = s.map_extent().unwrap_or((v.dims[y].len, v.dims[x].len));
+                let size = fit_size(nx.max(1), ny.max(1), area.0, area.1);
                 let m = s.map(size, false)?;
                 // The sampled range, widened to every value drawn (it is all on the page).
                 let (lo, hi) =
