@@ -189,11 +189,28 @@ async fn save_png(app: State<'_, App>, path: PathBuf, w: u32, h: u32) -> Res<Str
     with(&app, |s| s.write_png(&path, (w, h)).map_err(err))
 }
 
+/// Local files named on the command line, opened at start (none: the window asks).
+fn opened_from_args() -> App {
+    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let session = (!paths.is_empty())
+        .then(|| {
+            bridge::open(OpenRequest {
+                paths,
+                ..OpenRequest::default()
+            })
+        })
+        .and_then(|r| r.map_err(|e| eprintln!("nqv: {e:#}")).ok());
+    App {
+        session: Mutex::new(session),
+        last_map: Mutex::new(None),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(App::default())
+        .manage(opened_from_args())
         .invoke_handler(tauri::generate_handler![
             version,
             open,
