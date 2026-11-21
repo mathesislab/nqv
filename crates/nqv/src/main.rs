@@ -205,6 +205,17 @@ impl Output {
 }
 
 fn main() -> Result<()> {
+    // `nqv serve --stdio`: answer a remote session on stdin/stdout (started over ssh).
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().is_some_and(|a| a == "serve") {
+        if argv.get(1).map(String::as_str) != Some("--stdio") || argv.len() != 2 {
+            bail!("usage: nqv serve --stdio");
+        }
+        let (stdin, stdout) = (std::io::stdin(), std::io::stdout());
+        let mut r = std::io::BufReader::new(stdin.lock());
+        let mut w = std::io::BufWriter::new(stdout.lock());
+        return nqv_proto::serve(&mut r, &mut w, env!("CARGO_PKG_VERSION"));
+    }
     let args = Args::parse();
     if args.recipes {
         let list = recipe::list();

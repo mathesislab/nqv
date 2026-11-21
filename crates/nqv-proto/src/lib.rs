@@ -5,9 +5,11 @@
 pub mod frame;
 pub mod message;
 pub mod raster;
+pub mod server;
 
 pub use crate::message::{Envelope, Request, Response};
 pub use crate::raster::EncodedRaster;
+pub use crate::server::serve;
 
 /// Protocol version; client and server must agree.
 pub const VERSION: u32 = 1;

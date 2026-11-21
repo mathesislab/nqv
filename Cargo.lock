@@ -1109,6 +1109,7 @@ dependencies = [
  "crossterm",
  "image",
  "nqv-core",
+ "nqv-proto",
  "nqv-render",
  "nqv-session",
  "ratatui",
