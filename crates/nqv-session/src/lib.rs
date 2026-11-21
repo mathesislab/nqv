@@ -2,6 +2,7 @@
 //! commands (`:` syntax and flags), recipes and variable matching. Front ends (the
 //! terminal, the desktop app, the browser) only draw and take input.
 
+pub mod backend;
 pub mod command;
 pub mod fuzzy;
 pub mod recipe;

@@ -1111,6 +1111,7 @@ version = "0.1.0"
 name = "nqv-session"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "nqv-core",
 ]
 
