@@ -3,6 +3,7 @@
 //! everything shown in the viewer can be reproduced from the command line.
 
 use nqv_core::{Interp, Levels, Op, Show};
+use serde::{Deserialize, Serialize};
 
 /// Each `:` command with its flag and what it does, for help screens.
 pub const COMMANDS: &[(&str, &str, &str)] = &[
@@ -71,7 +72,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
 ];
 
 /// Position along a dimension: VALUE or @INDEX.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum TimeSel {
     /// Nearest coordinate value (or 1-based index without a coordinate variable).
     Value(f64),
@@ -80,7 +81,7 @@ pub enum TimeSel {
 }
 
 /// How the colour (or y-axis) range is set.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum RangeMode {
     /// From the data shown.
     Auto,
@@ -92,7 +93,8 @@ pub enum RangeMode {
     Log(Option<(f32, f32)>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Serializable: the terminal viewer hands its options to the desktop app as commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
     /// Variable, matched like the picker (`file:var`, fuzzy).
     Var(String),
@@ -119,7 +121,7 @@ pub enum Command {
 }
 
 /// Contours as typed: the variable is resolved by the viewer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContourCmd {
     pub var: String,
     pub levels: Levels,
@@ -143,7 +145,7 @@ impl ContourCmd {
 }
 
 /// A mask condition as typed: the variable is resolved by the viewer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaskCond {
     pub var: String,
     pub op: Op,
