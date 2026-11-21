@@ -2,7 +2,7 @@
 
 Quick-look viewer for NetCDF files that runs in the terminal you are already in, local or over ssh. No X11 needed.
 
-Status: spike. Shows 2D slices of regular-grid variables. Design: [docs/architecture.md](docs/architecture.md).
+Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (e.g. time series) as line plots. Dimensions of length 1 are ignored, so `(time, lat=1, lon=1)` is a line plot. Design: [docs/architecture.md](docs/architecture.md).
 
 ## Use
 
@@ -12,8 +12,8 @@ nqv file.nc [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 
 | Key | Action |
 |---|---|
-| ← → / Home End | first leading dimension (usually time) |
-| ↑ ↓ | second leading dimension (e.g. level) |
+| ← → / Home End | first dimension not shown (usually time) |
+| ↑ ↓ | second dimension not shown (e.g. level) |
 | `v` | pick a variable (type to filter, Enter, Esc) |
 | `c` | next colour map |
 | `r` | toggle range: auto / symmetric around 0 |

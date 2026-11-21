@@ -1,25 +1,29 @@
-//! Drawing: map, colour bar, status line, help line, variable picker.
+//! Drawing: map or line plot, colour bar, status line, help line, variable picker.
 
+use nqv_core::{Kind, Series, VarInfo, finite_range};
 use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Axis, Block, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph, Wrap,
+};
 use ratatui_image::Image;
 
 use crate::Output;
-use crate::app::{App, Map, filtered_vars};
+use crate::app::{App, Plot, filtered_vars};
 
 pub struct Areas {
-    pub map: Rect,
+    pub plot: Rect,
     pub bar: Rect,
     pub status: Rect,
     pub help: Rect,
 }
 
 pub fn layout(area: Rect) -> Areas {
-    let [map, bar, status, help] = Layout::vertical([
+    let [plot, bar, status, help] = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -27,7 +31,7 @@ pub fn layout(area: Rect) -> Areas {
     ])
     .areas(area);
     Areas {
-        map,
+        plot,
         bar,
         status,
         help,
@@ -36,31 +40,103 @@ pub fn layout(area: Rect) -> Areas {
 
 pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
     let truecolor = !matches!(out, Output::Blocks { truecolor: false });
+    let v = app.var_info();
     if let Some(fr) = &app.frame {
-        match &fr.map {
-            Map::Pixels { proto, w, h } => {
+        let cmap = &CMAPS[app.cmap];
+        match &fr.plot {
+            Plot::Pixels { proto, w, h } => {
                 let Output::Pixels(p) = out else {
                     unreachable!()
                 };
                 let fs = p.font_size();
                 let cols = w.div_ceil(fs.width as u32) as u16;
                 let rows = h.div_ceil(fs.height as u32) as u16;
-                f.render_widget(Image::new(proto), centered(a.map, cols, rows));
+                f.render_widget(Image::new(proto), centered(a.plot, cols, rows));
             }
-            Map::Blocks(img) => draw_blocks(f, img, a.map, truecolor),
-            Map::Error(e) => f.render_widget(
+            Plot::Blocks(img) => draw_blocks(f, img, a.plot, truecolor),
+            Plot::Line(s) => {
+                if let Some(n) = &fr.norm {
+                    draw_line(f, a.plot, app, s, n, color(cmap.at(0.6), truecolor));
+                }
+            }
+            Plot::Scalar(x) => {
+                let units = v.units.as_deref().unwrap_or("");
+                let text = format!("{} = {} {units}", v.name, fmt(*x));
+                let r = centered(a.plot, text.chars().count() as u16, 1);
+                f.render_widget(Paragraph::new(text).bold(), r);
+            }
+            Plot::Error(e) => f.render_widget(
                 Paragraph::new(e.as_str()).red().wrap(Wrap { trim: true }),
-                a.map,
+                a.plot,
             ),
         }
-        if let Some(n) = &fr.norm {
-            draw_bar(f, a.bar, n, &CMAPS[app.cmap], truecolor);
+        if matches!(fr.plot, Plot::Pixels { .. } | Plot::Blocks(_))
+            && let Some(n) = &fr.norm
+        {
+            draw_bar(f, a.bar, n, cmap, truecolor);
         }
     }
     f.render_widget(Paragraph::new(status_line(app, out)), a.status);
-    f.render_widget(Paragraph::new(help_line(app)).dim(), a.help);
+    f.render_widget(Paragraph::new(help_line(v)).dim(), a.help);
     if app.picker.is_some() {
         draw_picker(f, app);
+    }
+}
+
+/// Line plot with braille markers, y range from `n`.
+fn draw_line(f: &mut Frame, area: Rect, app: &App, s: &Series, n: &Norm, fg: Color) {
+    let v = app.var_info();
+    let Kind::Series { along } = v.kind() else {
+        return;
+    };
+    let dim = &v.dims[along];
+    let xunits = app.cat.coord_var(dim).and_then(|c| c.units.clone());
+    let pts: Vec<(f64, f64)> =
+        s.x.iter()
+            .zip(&s.y)
+            .filter(|(x, y)| x.is_finite() && y.is_finite())
+            .map(|(&x, &y)| (x as f64, y as f64))
+            .collect();
+    let (x0, x1) = padded(finite_range(&s.x));
+    let (y0, y1) = padded(Some((n.min, n.max)));
+    let labels = |a: f64, b: f64| {
+        let m = 0.5 * (a + b);
+        vec![fmt(a as f32), fmt(m as f32), fmt(b as f32)]
+    };
+    let xtitle = match xunits {
+        Some(u) => format!("{} [{u}]", dim.name),
+        None => dim.name.clone(),
+    };
+    let ds = Dataset::default()
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::new().fg(fg))
+        .data(&pts);
+    let chart = Chart::new(vec![ds])
+        .x_axis(
+            Axis::default()
+                .title(xtitle)
+                .bounds([x0, x1])
+                .labels(labels(x0, x1)),
+        )
+        .y_axis(
+            Axis::default()
+                .title(v.units.clone().unwrap_or_default())
+                .bounds([y0, y1])
+                .labels(labels(y0, y1)),
+        );
+    f.render_widget(chart, area);
+}
+
+/// Axis bounds from a range, widened when it is empty or a single value.
+fn padded(r: Option<(f32, f32)>) -> (f64, f64) {
+    match r {
+        Some((a, b)) if a.is_finite() && b.is_finite() && b > a => (a as f64, b as f64),
+        Some((a, _)) if a.is_finite() => {
+            let d = if a == 0.0 { 1.0 } else { 0.01 * a.abs() as f64 };
+            (a as f64 - d, a as f64 + d)
+        }
+        _ => (0.0, 1.0),
     }
 }
 
@@ -137,7 +213,8 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
     if let Some(u) = &v.units {
         s.push(Span::raw(format!(" [{u}]")));
     }
-    for (d, &i) in v.leading_dims().iter().zip(&app.fixed) {
+    for k in v.step_dims() {
+        let (d, i) = (&v.dims[k], app.index[k]);
         let c = app.cat.coord(d).and_then(|c| c.get(i).copied());
         let val = c.map(|c| format!(" ({})", fmt(c))).unwrap_or_default();
         s.push(Span::raw(format!("  {}={}/{}{val}", d.name, i + 1, d.len)));
@@ -157,14 +234,14 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
     Line::from(s)
 }
 
-fn help_line(app: &App) -> String {
-    let lead = app.var_info().leading_dims();
+fn help_line(v: &VarInfo) -> String {
+    let steps = v.step_dims();
     let mut h = String::new();
-    if let Some(d) = lead.first() {
-        h += &format!("←→ {}  ", d.name);
+    if let Some(&d) = steps.first() {
+        h += &format!("←→ {}  ", v.dims[d].name);
     }
-    if let Some(d) = lead.get(1) {
-        h += &format!("↑↓ {}  ", d.name);
+    if let Some(&d) = steps.get(1) {
+        h += &format!("↑↓ {}  ", v.dims[d].name);
     }
     h + "v var  c cmap  r range  q quit"
 }
@@ -184,7 +261,13 @@ fn draw_picker(f: &mut Frame, app: &App) {
                 .iter()
                 .map(|d| format!("{}={}", d.name, d.len))
                 .collect();
+            let kind = match v.kind() {
+                Kind::Map { .. } => "map ",
+                Kind::Series { .. } => "line",
+                Kind::Scalar => "val ",
+            };
             ListItem::new(Line::from(vec![
+                Span::raw(format!("{kind} ")).dim(),
                 Span::raw(format!("{:<20}", v.name)).bold(),
                 Span::raw(format!(" {}", v.long_name.as_deref().unwrap_or(""))),
                 Span::raw(format!("  ({})", dims.join(", "))).dim(),
