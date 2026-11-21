@@ -22,6 +22,7 @@ nqv [PATH...] [options]
 | `-j a.nc b.nc ...` | the files joined along time (the record dimension) into one, ordered by their first time value |
 | `-j seg1/ seg2/ ...` | the files of the same name across the folders joined, e.g. restart segments |
 | `A... --vs B...` | comparison of two sets of paths, each opened as without `--vs`; with `-j` both sides are joined: `nqv -j run1/seg* --vs run2/seg*` |
+| `HOST:PATH...` | any of the above on another machine over ssh: the data is read there, the view drawn here (see below) |
 | (none) | file browser |
 
 Everything the viewer shows can be set from the command line; each `:` command in the viewer has a flag:
@@ -92,6 +93,10 @@ Joined files must have the same variables and dimensions apart from the time len
 
 Beside a map (or on a line below it when there is no room) the terminal shows statistics of the slice: min, mean, max, standard deviation and the share of cells with a value, after masking. Mean and standard deviation are weighted (marked *, with what by): by the cell-area variable named in the CF `cell_measures` attribute, else by a variable called `area`, `cell_area`, `areacella` or `areacello` on the same grid in the same file, else by the cosine of latitude on latitude-longitude grids (y coordinate in degrees north, or named lat/latitude); otherwise they are unweighted. Slices over 4 million cells are sampled (marked ~).
 
+### Remote files
+
+`nqv albedo0:/path/to/run/ -v H_ice` (scp-style `HOST:PATH`, all paths on one host) starts `nqv serve --stdio` on the host over ssh, with your ssh config, keys and jump hosts. The server reads the data and sends screen-sized maps (16-bit, LZ4-compressed), so the terminal, images and PNGs come from your machine: `--png` writes the file locally. Everything else works as with local files, including the file browser (on the host's file system), `--diff`, `-j`, `--vs` and recipes (from your local `~/.nqv/recipes`). The host needs the same nqv version (`scripts/deploy.sh HOST`); it is found on the PATH or in `~/bin`, or give `--remote-cmd`.
+
 Graphics output is detected at start. Terminals without an image protocol (Terminal.app, GNOME Terminal, anything under tmux) get half-block characters. Set a default with `NQV_GFX`, e.g. `export NQV_GFX=blocks256` for terminals without true colour.
 
 ## Build
@@ -115,6 +120,7 @@ This installs `~/bin/nqv` on each host (`NQV_DEST` changes the folder). Add `~/b
 | `nqv-core` | `Reader` trait, NetCDF reader (`netcdf-reader`), screen-sized raster views, colour range |
 | `nqv-render` | Normalisation, colour maps, contour drawing; no dependencies |
 | `nqv-session` | What a viewer does, for every front end: view state, `:` commands and flags, recipes, file switching, PNG output; reads data through a `Backend` (local files now, a server over ssh next) |
-| `nqv` | Terminal app: drawing, keys, mouse |
+| `nqv-proto` | Protocol between a session and `nqv serve --stdio`: framed postcard messages, maps quantised to 16 bits and LZ4-compressed; the server loop and the `Remote` backend over ssh |
+| `nqv` | Terminal app: drawing, keys, mouse; `nqv serve --stdio` |
 
 `cargo run --release -p nqv-core --example probe -- FILE` lists the map variables of a file with view timings.
