@@ -302,7 +302,7 @@ pub fn render_map(p: &MapPlot) -> RgbaImage {
 pub fn bar_ticks(n: &Norm) -> Vec<(f32, String)> {
     let (lo, hi) = (n.min as f64, n.max as f64);
     let values: Vec<f64> = if n.log {
-        let decades = (lo.log10().ceil() as i32)..=(hi.log10().floor() as i32);
+        let decades = (lo.log10().floor() as i32)..=(hi.log10().floor() as i32);
         let mults: &[f64] = if hi / lo < 100.0 {
             &[1.0, 2.0, 5.0]
         } else {
@@ -462,6 +462,11 @@ mod tests {
             .map(|t| t.1)
             .collect();
         assert_eq!(t, ["500", "1000", "1500", "2000"]);
+        let t: Vec<String> = bar_ticks(&Norm::log(4.3, 21.0))
+            .into_iter()
+            .map(|t| t.1)
+            .collect();
+        assert_eq!(t, ["5", "10", "20"]);
         let p = bar_ticks(&Norm::log(1.0, 100.0));
         assert!((p.iter().find(|t| t.1 == "10").unwrap().0 - 0.5).abs() < 1e-6);
     }

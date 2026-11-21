@@ -7,8 +7,8 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEve
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
     Catalog, Cond, ContourLine, ContourSpec, Kind, Mask, RangeEstimate, Segment, Series,
-    SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours,
-    fit_size, masked, netcdf_files, range, series, series_range, value, view,
+    SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask,
+    contours, fit_size, masked, netcdf_files, range, series, series_range, stats, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, braille_cells, cmap_index, colorize, draw_lines, extends};
 use ratatui::DefaultTerminal;
@@ -36,6 +36,9 @@ pub struct Map {
     pub image: MapImage,
     pub spec: ViewSpec,
     pub rect: Rect,
+    /// Statistics of the slice, and where to show them (beside the map, when it leaves
+    /// room).
+    pub stats: Option<(Stats, Rect)>,
 }
 
 pub enum MapImage {
@@ -1154,26 +1157,62 @@ impl App {
                     colorize(raster.w, raster.h, &raster.values, &norm, &CMAPS[self.cmap]);
                 let (w, h) = (rgba.w, rgba.h);
                 let segments = self.contour_segments(&spec);
-                let (image, rect) = match out {
-                    Output::Blocks { .. } => (
-                        MapImage::Blocks {
-                            img: rgba,
-                            braille: braille_cells(w, h, &segments),
-                        },
-                        ui::centered(area, w as u16, h.div_ceil(2) as u16),
-                    ),
+                // Leave room for the statistics beside the map when it is narrower than the area.
+                let (cols, rows) = match out {
+                    Output::Blocks { .. } => (w as u16, h.div_ceil(2) as u16),
+                    Output::Pixels(p) => {
+                        let fs = p.font_size();
+                        (
+                            w.div_ceil(fs.width as u32) as u16,
+                            h.div_ceil(fs.height as u32) as u16,
+                        )
+                    }
+                };
+                // Beside the map when it leaves room, else on one line below it.
+                let side = area.width.saturating_sub(cols) >= ui::STATS_WIDTH + 2;
+                let below = !side && area.height >= 4;
+                let map_area = match (side, below) {
+                    (true, _) => Rect {
+                        width: area.width - ui::STATS_WIDTH - 1,
+                        ..area
+                    },
+                    (_, true) => Rect {
+                        height: area.height - 1,
+                        ..area
+                    },
+                    _ => area,
+                };
+                let rect = ui::centered(map_area, cols, rows);
+                let place = match (side, below) {
+                    (true, _) => Some(Rect::new(
+                        rect.x + rect.width + 2,
+                        rect.y,
+                        ui::STATS_WIDTH,
+                        rect.height.min(9),
+                    )),
+                    (_, true) => Some(Rect::new(area.x, rect.y + rect.height, area.width, 1)),
+                    _ => None,
+                };
+                let stats = place.and_then(|r| stats(&self.cat, &spec).ok().map(|st| (st, r)));
+                let image = match out {
+                    Output::Blocks { .. } => MapImage::Blocks {
+                        img: rgba,
+                        braille: braille_cells(w, h, &segments),
+                    },
                     Output::Pixels(p) => {
                         draw_lines(&mut rgba, &segments);
-                        let fs = p.font_size();
-                        let cols = w.div_ceil(fs.width as u32) as u16;
-                        let rows = h.div_ceil(fs.height as u32) as u16;
-                        match pixels(p, rgba, area) {
-                            Ok(proto) => (MapImage::Pixels(proto), ui::centered(area, cols, rows)),
+                        match pixels(p, rgba, map_area) {
+                            Ok(proto) => MapImage::Pixels(proto),
                             Err(e) => return (Plot::Error(e), None, None),
                         }
                     }
                 };
-                let plot = Plot::Map(Map { image, spec, rect });
+                let plot = Plot::Map(Map {
+                    image,
+                    spec,
+                    rect,
+                    stats,
+                });
                 (plot, Some(rg), Some(norm))
             }
         }

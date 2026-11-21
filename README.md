@@ -31,7 +31,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:v NAME` | `-v NAME` | variable (fuzzy like the picker; `file:var` picks the file) |
 | `:t VALUE`, `:t @INDEX` | `-t VALUE` | step along the first stepped dimension (usually time) |
 | `:at DIM=VALUE` | `--at DIM=VALUE` | any dimension (repeatable); map dimensions pick the clicked cell |
-| `:range MIN MAX`, `auto`, `sym`, `log [MIN MAX]` | `--range MIN,MAX`, `log,MIN,MAX` | colour range (y range for line plots); `log`: logarithmic colours, by default over at most four decades below the maximum |
+| `:range MIN MAX`, `auto`, `sym`, `log [MIN MAX]` | `--range MIN,MAX`, `log,MIN,MAX` | colour range (y range for line plots); `log`: logarithmic colours or y axis, by default over at most four decades below the maximum |
 | `:cmap NAME` | `--cmap NAME` | colour map: viridis, cividis, plasma, inferno, magma, RdBu_r, grays, jet |
 | `:cvd on\|off` | `--cvd` | colour-blind mode (also `NQV_CVD=1`): `c` cycles only maps suited to colour vision deficiencies (all but jet); choosing jet anyway gives a warning |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
@@ -87,6 +87,8 @@ range log 1 3000
 The mask variable is looked up by exact name in the current file, then in the other files; `file.nc:var` names the file. It must lie on the same grid; dimensions it shares with the shown variable (such as time) follow the current step. The colour range covers visible values only.
 
 Joined files must have the same variables and dimensions apart from the time length; time steps out of order between files give a warning. In a comparison, variables missing in the second file, or with different dimensions, show an error instead of a plot.
+
+Beside a map (or on a line below it when there is no room) the terminal shows statistics of the slice: min, mean, max, standard deviation (unweighted) and the share of cells with a value, after masking. Slices over 4 million cells are sampled (marked ~).
 
 Graphics output is detected at start. Terminals without an image protocol (Terminal.app, GNOME Terminal, anything under tmux) get half-block characters. Set a default with `NQV_GFX`, e.g. `export NQV_GFX=blocks256` for terminals without true colour.
 

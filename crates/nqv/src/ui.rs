@@ -1,7 +1,7 @@
 //! Drawing: map or line plot, colour bar, series at a clicked cell, status line, help
 //! line, variable picker.
 
-use nqv_core::{DimInfo, Kind, Series, Show, finite_range};
+use nqv_core::{DimInfo, Kind, Series, Show, Stats, finite_range};
 use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast, extends};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -62,12 +62,17 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
     let fg = color(cmap.at(0.6), truecolor);
     if let Some(fr) = &app.frame {
         match &fr.plot {
-            Plot::Map(m) => match &m.image {
-                MapImage::Pixels(proto) => f.render_widget(Image::new(proto), m.rect),
-                MapImage::Blocks { img, braille } => {
-                    draw_blocks(f, img, braille, m.rect, truecolor)
+            Plot::Map(m) => {
+                match &m.image {
+                    MapImage::Pixels(proto) => f.render_widget(Image::new(proto), m.rect),
+                    MapImage::Blocks { img, braille } => {
+                        draw_blocks(f, img, braille, m.rect, truecolor)
+                    }
                 }
-            },
+                if let Some((st, r)) = &m.stats {
+                    draw_stats(f, *r, st, v.units.as_deref());
+                }
+            }
             Plot::Line(_) => {
                 if let Kind::Series { along } = v.kind() {
                     draw_series(f, a.plot, app, fr, along, None, fg);
@@ -301,6 +306,62 @@ fn padded(r: Option<(f32, f32)>) -> (f64, f64) {
             (a as f64 - d, a as f64 + d)
         }
         _ => (0.0, 1.0),
+    }
+}
+
+/// Columns of the statistics beside a map.
+pub const STATS_WIDTH: u16 = 22;
+
+/// Statistics of the slice shown: min, mean, max, standard deviation, visible cells; as
+/// a column, or as one line when `r` is one row high.
+fn draw_stats(f: &mut Frame, r: Rect, st: &Stats, units: Option<&str>) {
+    let approx = if st.exact { "" } else { "~" };
+    if r.height == 1 {
+        let share = 100.0 * st.valid as f64 / st.total.max(1) as f64;
+        let text = format!(
+            "{approx}min {}  mean {}  max {}  std {}  cells {} ({share:.0}%){}",
+            fmt(st.min),
+            fmt(st.mean as f32),
+            fmt(st.max),
+            fmt(st.std as f32),
+            count(st.valid),
+            if st.exact { "" } else { "  (~ sample)" }
+        );
+        let w = text.chars().count() as u16;
+        f.render_widget(Paragraph::new(text).dim(), centered(r, w, 1));
+        return;
+    }
+    let row = |k: &str, v: String| {
+        Line::from(vec![
+            Span::raw(format!("{k:<6}")).dim(),
+            Span::raw(format!("{approx}{v}")),
+        ])
+    };
+    let share = 100.0 * st.valid as f64 / st.total.max(1) as f64;
+    let mut lines = vec![
+        Line::raw(match units {
+            Some(u) => format!("slice [{u}]"),
+            None => "slice".into(),
+        })
+        .bold(),
+        row("min", fmt(st.min)),
+        row("mean", fmt(st.mean as f32)),
+        row("max", fmt(st.max)),
+        row("std", fmt(st.std as f32)),
+        row("cells", format!("{} ({share:.0}%)", count(st.valid))),
+    ];
+    if !st.exact {
+        lines.push(Line::raw("~ from a sample").dim());
+    }
+    f.render_widget(Paragraph::new(lines), r);
+}
+
+/// Count with a k/M suffix.
+fn count(n: usize) -> String {
+    match n {
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1e6),
+        n if n >= 10_000 => format!("{:.0}k", n as f64 / 1e3),
+        n => n.to_string(),
     }
 }
 
