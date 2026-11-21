@@ -2,6 +2,7 @@
 // in the desktop app (Tauri commands) and, later, in a browser (a WebSocket).
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export type Region = { y0: number; y1: number; x0: number; x1: number };
 
@@ -110,11 +111,15 @@ export type OpenRequest = {
   host?: string | null;
 };
 
+export type Note = { text: string; error: boolean };
+
 export interface Api {
   /** Show the window, once its first page is drawn. */
   ready(): Promise<void>;
-  /** Files opened from outside (the Finder): an error, or null once open. */
-  onOpened(f: (error: string | null) => void): Promise<void>;
+  /** Files opened from outside (the Finder, nqv -g) in this window. */
+  onOpened(f: () => void): Promise<void>;
+  /** A note on what this window shows (files opened from outside), once. */
+  takeNote(): Promise<Note | null>;
   /** The version of an update found, and later ones as they are found. */
   onUpdate(f: (version: string | null) => void): Promise<void>;
   /** Install the update found and restart; `progress` gets the bytes so far and in all. */
@@ -158,8 +163,10 @@ export const tauriApi: Api = {
   vars: (query) => invoke("vars", { query }),
   ready: () => invoke("ready"),
   onOpened: async (f) => {
-    await listen<string | null>("opened", (e) => f(e.payload));
+    // This window's only, not another's.
+    await getCurrentWebviewWindow().listen("opened", () => f());
   },
+  takeNote: () => invoke("take_note"),
   onUpdate: async (f) => {
     await listen<string | null>("update", (e) => f(e.payload));
     f(await invoke("update_available"));

@@ -2,29 +2,40 @@
 //! commands here are thin: `bridge` does the work, the session holds the state.
 
 mod bridge;
+#[cfg(unix)]
+mod handoff;
 mod update;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use nqv_core::ViewSpec;
 use nqv_session::command;
 use nqv_session::{Effect, Files, LocalFiles, Session};
+use serde::Serialize;
 use std::time::Duration;
 
 use tauri::ipc::Response;
 use tauri::window::Color;
-use tauri::{AppHandle, Manager, State, Theme, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, Theme, WebviewWindow, WindowEvent};
 
 use crate::bridge::{Colormap, OpenRequest, SeriesView, VarItem, ViewState};
 
-/// What a window shows: its session, and the map last drawn (for clicks, zoom and pan
-/// on it).
+/// What a window shows: its session, the map last drawn (for clicks, zoom and pan on
+/// it), and a note for the page to show (on files opened from outside).
 #[derive(Default)]
 struct View {
     session: Option<Session>,
     last_map: Option<ViewSpec>,
+    note: Option<Note>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct Note {
+    text: String,
+    error: bool,
 }
 
 /// The views by window label. Each has its own lock: one window's slow read does not
@@ -40,12 +51,15 @@ impl App {
         views.entry(label.to_string()).or_default().clone()
     }
 
-    /// A new session for the window `label`.
-    fn set(&self, label: &str, s: Session) {
+    /// A new session (or none) for the window `label`, and a note about it.
+    fn set(&self, label: &str, s: Option<Session>, note: Option<Note>) {
         let v = self.view(label);
         let mut v = v.lock().expect("view lock");
-        v.session = Some(s);
-        v.last_map = None;
+        *v = View {
+            session: s,
+            last_map: None,
+            note,
+        };
     }
 
     /// The window is gone: its session ends (and a remote connection with it).
@@ -99,28 +113,103 @@ fn show(w: &WebviewWindow) {
     }
 }
 
-/// The window opens hidden, in the pages' background (--bg, light or dark as the
-/// system is), till the page says it has drawn; or after a while, should it not.
-fn prepare_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let dark = w.theme().is_ok_and(|t| t == Theme::Dark);
-        let bg = if dark {
-            Color(0x1d, 0x1e, 0x20, 0xff)
-        } else {
-            Color(0xff, 0xff, 0xff, 0xff)
-        };
-        let _ = w.set_background_color(Some(bg));
-    }
-    let app = app.clone();
+/// A window opens hidden, in the pages' background (--bg, light or dark as the system
+/// is), till the page says it has drawn; or after a while, should it not.
+fn prepare_window(w: &WebviewWindow) {
+    let dark = w.theme().is_ok_and(|t| t == Theme::Dark);
+    let bg = if dark {
+        Color(0x1d, 0x1e, 0x20, 0xff)
+    } else {
+        Color(0xff, 0xff, 0xff, 0xff)
+    };
+    let _ = w.set_background_color(Some(bg));
+    let w = w.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(3));
-        let h = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if let Some(w) = h.get_webview_window("main") {
-                show(&w);
-            }
-        });
+        let h = w.clone();
+        let _ = w.run_on_main_thread(move || show(&h));
     });
+}
+
+/// Another window like the main one.
+fn new_window(app: &AppHandle, label: &str, title: &str) -> tauri::Result<WebviewWindow> {
+    let mut cfg = app
+        .config()
+        .app
+        .windows
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    cfg.label = label.to_string();
+    cfg.title = title.to_string();
+    let w = tauri::WebviewWindowBuilder::from_config(app, &cfg)?.build()?;
+    prepare_window(&w);
+    Ok(w)
+}
+
+/// A window title for files on `host` (None: here).
+fn title(host: Option<&str>, paths: &[PathBuf]) -> String {
+    let first = paths
+        .first()
+        .map_or(String::new(), |p| p.display().to_string());
+    let more = match paths.len() {
+        0 | 1 => String::new(),
+        n => format!(" +{}", n - 1),
+    };
+    match host {
+        Some(h) => format!("{h}:{first}{more}"),
+        None => format!("{first}{more}"),
+    }
+}
+
+/// Show files opened from outside (the Finder, `nqv -g`), or why they did not open: in
+/// the main window while it has nothing open, else in a new window. The page hears of
+/// it as `opened` (main window), or finds it on loading.
+fn present(app: &AppHandle, title: &str, opened: anyhow::Result<Session>, note: Option<Note>) {
+    let (session, note) = match opened {
+        Ok(s) => {
+            let note = note.or_else(|| s.startup_message().map(|text| Note { text, error: false }));
+            (Some(s), note)
+        }
+        Err(e) => (
+            None,
+            Some(Note {
+                text: format!("{e:#}"),
+                error: true,
+            }),
+        ),
+    };
+    let state = app.state::<App>();
+    let main = app.get_webview_window("main").filter(|_| {
+        let v = state.view("main");
+        v.lock().expect("view lock").session.is_none()
+    });
+    if let Some(w) = main {
+        state.set("main", session, note);
+        let _ = w.set_title(title);
+        let _ = app.emit_to("main", "opened", ());
+        // A hidden window is shown once its page has drawn.
+        if w.is_visible().unwrap_or(false) {
+            let _ = w.set_focus();
+        }
+        return;
+    }
+    // The view is there before the page asks for it.
+    static N: AtomicUsize = AtomicUsize::new(1);
+    let label = format!("view-{}", N.fetch_add(1, Ordering::Relaxed));
+    state.set(&label, session, note);
+    if let Err(e) = new_window(app, &label, title) {
+        eprintln!("nqv: cannot open a window: {e}");
+        state.close(&label);
+    }
+}
+
+/// The note on what the window shows, once.
+#[tauri::command]
+fn take_note(app: State<'_, App>, w: WebviewWindow) -> Option<Note> {
+    let v = app.view(w.label());
+    let mut v = v.lock().expect("view lock");
+    v.note.take()
 }
 
 /// The update found, if any.
@@ -148,7 +237,7 @@ async fn open(
 ) -> Res<(ViewState, Option<String>)> {
     let s = bridge::open(req).map_err(err)?;
     let out = (bridge::state(&s), s.startup_message());
-    app.set(w.label(), s);
+    app.set(w.label(), Some(s), None);
     Ok(out)
 }
 
@@ -313,34 +402,19 @@ async fn save_png(
     with(&app, &window, |s| s.write_png(&path, (w, h)).map_err(err))
 }
 
-/// Open local files in the main window in place of its files (files given to the app: its
-/// arguments, as a desktop file's %F gives them, or macOS's Open With). Paths are made
-/// absolute; a missing one stays as given, for the message.
-fn open_local(app: &App, paths: Vec<PathBuf>) -> anyhow::Result<()> {
-    let paths = paths
+/// Open local files given to the app: its arguments (as a desktop file's %F gives
+/// them), or macOS's Open With. Paths are made absolute; a missing one stays as given,
+/// for the message.
+fn open_local(app: &AppHandle, paths: Vec<PathBuf>) {
+    let paths: Vec<PathBuf> = paths
         .into_iter()
         .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
         .collect();
-    let s = bridge::open(OpenRequest {
-        paths,
+    let opened = bridge::open(OpenRequest {
+        paths: paths.clone(),
         ..OpenRequest::default()
-    })?;
-    app.set("main", s);
-    Ok(())
-}
-
-/// Files opened while running: the window hears of it as `opened` (an error, or null),
-/// and is shown should it not be yet.
-#[cfg(target_os = "macos")]
-fn opened(app: &AppHandle, paths: Vec<PathBuf>) {
-    use tauri::Emitter;
-    let err = open_local(&app.state::<App>(), paths)
-        .err()
-        .map(|e| format!("{e:#}"));
-    let _ = app.emit_to("main", "opened", err);
-    if let Some(w) = app.get_webview_window("main") {
-        show(&w);
-    }
+    });
+    present(app, &title(None, &paths), opened, None);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -351,13 +425,15 @@ pub fn run() {
         .manage(update::Updates::default())
         .manage(App::default())
         .setup(|app| {
-            let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-            if !args.is_empty()
-                && let Err(e) = open_local(&app.state::<App>(), args)
-            {
-                eprintln!("nqv: {e:#}");
+            if let Some(w) = app.get_webview_window("main") {
+                prepare_window(&w);
             }
-            prepare_window(app.handle());
+            let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+            if !args.is_empty() {
+                open_local(app.handle(), args);
+            }
+            #[cfg(unix)]
+            handoff::listen(app.handle());
             update::watch(app.handle());
             Ok(())
         })
@@ -369,6 +445,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             version,
             ready,
+            take_note,
             update_available,
             install_update,
             open,
@@ -393,12 +470,15 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building nqv")
-        .run(|_app, _event| {
+        .run(|_app, event| match event {
             // Open With, a file dropped on the Dock icon, a double click in the Finder
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Opened { urls } = _event {
+            tauri::RunEvent::Opened { urls } => {
                 let paths = urls.iter().filter_map(|u| u.to_file_path().ok()).collect();
-                opened(_app, paths);
+                open_local(_app, paths);
             }
+            #[cfg(unix)]
+            tauri::RunEvent::Exit => handoff::stop(),
+            _ => {}
         });
 }

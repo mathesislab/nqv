@@ -35,12 +35,14 @@
 
   onMount(async () => {
     api.onUpdate((v) => (update = v));
-    api.onOpened(async (e) => {
-      if (e) error = e;
-      else {
+    api.onOpened(async () => {
+      try {
         setState(await api.state());
         opening = false;
+      } catch {
+        opening = true;
       }
+      await showNote();
     });
     colormaps = await api.colormaps();
     try {
@@ -48,10 +50,17 @@
     } catch {
       opening = true;
     }
+    await showNote();
     await tick();
     // not requestAnimationFrame: a hidden webview does not run it
     if (view?.kind !== "map") setTimeout(showWindow, 50);
   });
+
+  async function showNote() {
+    const n = await api.takeNote();
+    if (n?.error) error = n.text;
+    else if (n) message = n.text;
+  }
 
   function setState(s: ViewState) {
     view = s;
