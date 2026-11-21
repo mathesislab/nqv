@@ -319,7 +319,7 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
         cmds.push(Command::Cvd(true));
     }
     if let Some(r) = &args.recipe {
-        cmds.extend(recipe::load(r)?);
+        cmds.push(Command::Recipe(r.clone()));
     }
     if let Some(v) = &args.var {
         cmds.push(Command::Var(v.clone()));

@@ -120,6 +120,8 @@ pub trait Files {
     fn list_dir(&self, path: &Path) -> Result<Vec<DirEntry>>;
     /// The variables of a NetCDF file.
     fn describe(&self, path: &Path) -> Result<Vec<VarInfo>>;
+    /// The text of a recipe in ~/.nqv/recipes there, if there is one.
+    fn recipe(&self, name: &str) -> Result<Option<String>>;
 }
 
 /// The file system of this machine.
@@ -132,6 +134,10 @@ impl Files for LocalFiles {
 
     fn describe(&self, path: &Path) -> Result<Vec<VarInfo>> {
         Ok(NetcdfReader::open(path)?.variables().to_vec())
+    }
+
+    fn recipe(&self, name: &str) -> Result<Option<String>> {
+        crate::recipe::text(name).map_err(anyhow::Error::msg)
     }
 }
 
@@ -220,6 +226,10 @@ impl Files for Local {
 
     fn describe(&self, path: &Path) -> Result<Vec<VarInfo>> {
         LocalFiles.describe(path)
+    }
+
+    fn recipe(&self, name: &str) -> Result<Option<String>> {
+        LocalFiles.recipe(name)
     }
 }
 

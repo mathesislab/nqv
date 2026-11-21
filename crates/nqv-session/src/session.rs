@@ -371,7 +371,7 @@ impl Session {
             }
             Command::Contour(c) => self.contour = c,
             Command::Recipe(name) => {
-                for c in recipe::load(&name)? {
+                for c in self.recipe(&name)? {
                     self.apply(c)?;
                 }
             }
@@ -391,6 +391,29 @@ impl Session {
             }
         }
         Ok(Effect::None)
+    }
+
+    /// The commands of recipe `name`: from this machine, else from where the data is
+    /// (a remote host's ~/.nqv/recipes).
+    fn recipe(&self, name: &str) -> Result<Vec<Command>, String> {
+        let local = recipe::load(name);
+        if local.is_ok() || recipe::text(name).ok().flatten().is_some() {
+            return local;
+        }
+        match self.backend.recipe(name) {
+            Ok(Some(text)) => {
+                let place = match &self.origin.host {
+                    Some(h) => format!("{name} on {h}"),
+                    None => name.to_string(),
+                };
+                recipe::parse_at(&text, &place)
+            }
+            Ok(None) if self.origin.host.is_some() => Err(format!(
+                "recipe '{name}' not found in ~/.nqv/recipes, here or on {}",
+                self.origin.host.as_deref().unwrap_or_default()
+            )),
+            _ => local,
+        }
     }
 
     /// In colour-blind mode, a note when the colour map does not suit it.

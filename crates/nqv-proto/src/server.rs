@@ -57,6 +57,7 @@ fn answer(local: &mut Option<Local>, req: Request) -> Response {
         }
         Request::ListDir(p) => return LocalFiles.list_dir(&p).map_or_else(err, Response::Dir),
         Request::Describe(p) => return LocalFiles.describe(&p).map_or_else(err, Response::Vars),
+        Request::Recipe(name) => return LocalFiles.recipe(&name).map_or_else(err, Response::Text),
         _ => {}
     }
     let Some(b) = local else {
@@ -99,7 +100,8 @@ fn answer(local: &mut Option<Local>, req: Request) -> Response {
         Request::Hello { .. }
         | Request::Open { .. }
         | Request::ListDir(_)
-        | Request::Describe(_) => {
+        | Request::Describe(_)
+        | Request::Recipe(_) => {
             unreachable!("answered above")
         }
     }

@@ -57,6 +57,8 @@ pub enum Request {
     },
     ListDir(PathBuf),
     Describe(PathBuf),
+    /// The text of a recipe in the server's ~/.nqv/recipes.
+    Recipe(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +86,7 @@ pub enum Response {
     },
     Dir(Vec<DirEntry>),
     Vars(Vec<VarInfo>),
+    Text(Option<String>),
     Error(String),
 }
 

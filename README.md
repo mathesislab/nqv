@@ -95,11 +95,14 @@ Beside a map (or on a line below it when there is no room) the terminal shows st
 
 ### Remote files
 
-`nqv albedo0:/path/to/run/ -v H_ice` (scp-style `HOST:PATH`, all paths on one host) starts `nqv serve --stdio` on the host over ssh, with your ssh config, keys and jump hosts. The server reads the data and sends screen-sized maps (16-bit, LZ4-compressed), so the terminal, images and PNGs come from your machine: `--png` writes the file locally. Everything else works as with local files, including the file browser (on the host's file system), `--diff`, `-j`, `--vs` and recipes (from your local `~/.nqv/recipes`). The host needs the same nqv version (`scripts/deploy.sh HOST`); it is found on the PATH or in `~/bin`, or give `--remote-cmd`.
+`nqv albedo0:/path/to/run/ -v H_ice` (scp-style `HOST:PATH`, all paths on one host) starts `nqv serve --stdio` on the host over ssh, with your ssh config, keys and jump hosts. The server reads the data and sends screen-sized maps (16-bit, LZ4-compressed), so the terminal, images and PNGs come from your machine: `--png` writes the file locally. Everything else works as with local files, including the file browser (on the host's file system), `--diff`, `-j`, `--vs` and recipes (from your local `~/.nqv/recipes`, else from the host's). The host needs the same nqv version (`scripts/deploy.sh HOST`); it is found on the PATH or in `~/bin`, or give `--remote-cmd`.
 
 Graphics output is detected at start. Terminals without an image protocol (Terminal.app, GNOME Terminal, anything under tmux) get half-block characters. Set a default with `NQV_GFX`, e.g. `export NQV_GFX=blocks256` for terminals without true colour.
 
 ## Build
+
+On your own machine (for remote files, or local ones): `cargo install --path crates/nqv`, which puts `nqv` in `~/.cargo/bin`.
+
 
 ```bash
 cargo build --release

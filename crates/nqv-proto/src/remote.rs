@@ -165,6 +165,10 @@ impl Files for Remote {
     fn describe(&self, path: &Path) -> Result<Vec<VarInfo>> {
         expect!(self.call(Request::Describe(path.to_path_buf()))?, Response::Vars(v) => v)
     }
+
+    fn recipe(&self, name: &str) -> Result<Option<String>> {
+        expect!(self.call(Request::Recipe(name.to_string()))?, Response::Text(t) => t)
+    }
 }
 
 impl Backend for Remote {

@@ -34,6 +34,20 @@ pub fn load(name: &str) -> Result<Vec<Command>, String> {
     parse(&text).map_err(|(line, e)| format!("recipe {} line {line}: {e}", p.display()))
 }
 
+/// The text of recipe `name` from this machine (a path, or a name in ~/.nqv/recipes),
+/// or None if there is none.
+pub fn text(name: &str) -> Result<Option<String>, String> {
+    let Ok(p) = path(name) else { return Ok(None) };
+    std::fs::read_to_string(&p)
+        .map(Some)
+        .map_err(|e| format!("recipe {}: {e}", p.display()))
+}
+
+/// Commands of recipe text found at `place` (for errors).
+pub fn parse_at(text: &str, place: &str) -> Result<Vec<Command>, String> {
+    parse(text).map_err(|(line, e)| format!("recipe {place} line {line}: {e}"))
+}
+
 /// Commands from recipe text, or the (1-based) line that failed and why.
 pub fn parse(text: &str) -> Result<Vec<Command>, (usize, String)> {
     let mut out = vec![];
