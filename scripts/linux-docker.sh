@@ -9,13 +9,14 @@ mkdir -p "$out"
 bundle=1
 [[ ${1:-} == --no-bundle ]] && bundle=0
 
-# Caches between runs: cargo, the target folder, npm.
+# Caches between runs: cargo and rustup, the target folder.
 docker volume create nqv-linux-cargo >/dev/null
 docker volume create nqv-linux-target >/dev/null
+docker volume create nqv-linux-rustup >/dev/null
 
 docker run --rm -i \
   -v "$root":/repo:ro -v "$out":/out \
-  -v nqv-linux-cargo:/root/.cargo -v nqv-linux-target:/work/target \
+  -v nqv-linux-cargo:/root/.cargo -v nqv-linux-rustup:/root/.rustup -v nqv-linux-target:/work/target \
   -e BUNDLE=$bundle -e APPIMAGE_EXTRACT_AND_RUN=1 -e NO_STRIP=true \
   ubuntu:22.04 bash -s <<'IN'
 set -euo pipefail
@@ -25,14 +26,15 @@ apt-get install -y -qq libwebkit2gtk-4.1-dev build-essential curl wget file libx
   libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 \
   imagemagick rsync openssh-client libgl1-mesa-dri >/dev/null
 command -v node >/dev/null || { curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null; apt-get install -y -qq nodejs >/dev/null; }
-command -v cargo >/dev/null || curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal
+cargo --version >/dev/null 2>&1 || curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal
 rsync -a --delete --exclude target --exclude node_modules --exclude build --exclude linux-out \
   --exclude .svelte-kit /repo/ /work/src/
 cd /work/src
 npm ci --silent
 NQV_SMOKE_SHOT=/out/screenshot.png scripts/ci/smoke-linux.sh
 if [ "$BUNDLE" = 1 ]; then
-  npm run tauri build -- --bundles deb,appimage
+  # the update signatures need the release key: not here
+  npm run tauri build -- --bundles deb,appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'
   cp -v $CARGO_TARGET_DIR/release/bundle/deb/*.deb $CARGO_TARGET_DIR/release/bundle/appimage/*.AppImage /out/
   dpkg-deb -c /out/*.deb | grep -E 'bin/|\.desktop'
 fi
