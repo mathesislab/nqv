@@ -14,6 +14,7 @@
   <nav>
     <a href="#modes">Terminal or desktop</a>
     <a href="#ways">Four ways in</a>
+    <a href="#projections">Projections</a>
     <a href="#features">Features</a>
     <a href="#download">Download</a>
     <a href="https://github.com/mathesislab/nqv">Source</a>
@@ -143,6 +144,19 @@
   --range log,1,3000 --png velocity.png</code></pre>
     </div>
     <img src="images/png.png" alt="A PNG written by nqv --png: the map with axes, colour bar, contour labels" loading="lazy" width="780" height="800">
+  </article>
+
+  <article id="projections" class="feature wide reverse">
+    <div>
+      <h2>Maps in a projection</h2>
+      <p>Show an ice sheet on the globe, a polar grid in longitude and latitude, or a global grid in polar
+        stereographic: <code>--proj latlon</code>, <code>stere north</code>, <code>laea south</code>,
+        <code>ortho -40,72</code>. nqv reads where the cells lie from the file's CF grid mapping or its
+        latitudes and longitudes, draws meridians and parallels, and gives the longitude and latitude of a
+        clicked cell. For files that lack it: <code>--grid "stere north"</code>.</p>
+      <p>The projections are part of nqv, checked against PROJ, so it stays one file with nothing to install.</p>
+    </div>
+    <img src="images/projection.png" alt="The desktop app showing Yelmo's Greenland surface velocity on a globe, with meridians, parallels and surface elevation contours" loading="lazy" width="1280" height="860">
   </article>
 
   <div class="grid">

@@ -51,7 +51,8 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:cvd on\|off` | `--cvd` | colour-blind mode (also `NQV_CVD=1`): `c` cycles only maps suited to colour vision deficiencies (all but jet); choosing jet anyway gives a warning |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
-| `:zoom DIM=A:B [DIM=A:B]`, `off` | `--zoom "lat=50:80 lon=@1:@200"` | part of the map: coordinate values or `@` indices per map dimension |
+| `:zoom DIM=A:B [DIM=A:B]`, `off` | `--zoom "lat=50:80 lon=@1:@200"` | part of the map: coordinate values or `@` indices per map dimension; in a projection `x=A:B y=C:D` (km) or `lon=A:B lat=C:D` |
+| `:proj SPEC`, `native` | `--proj SPEC` | maps in a projection (see below) |
 | `:recipe NAME` | `-r NAME` | apply a recipe (see below); `nqv --recipes` lists them |
 | `:save NAME` | | save the current settings as a recipe |
 | `:show diff\|a\|b` | `--show diff\|a\|b` | comparison side |
@@ -86,6 +87,25 @@ Masks hide values where conditions on other variables hold:
 ```
 
 In PNGs, contour levels are labelled along the lines and the colour bar has round ticks (powers of ten on a log scale). Values outside the colour range take the end colours; the colour bar then shows a triangle at that end (◀ ▶ in the terminal). Line plots are cut at a fixed y range. Contours are drawn over maps: about 10 round levels by default, or `step=500`, `n=5`, `levels=0,1000,2000`. The contoured variable must be on the same grid; contours follow the mask. Lines are black or white, whichever contrasts with the colour underneath; in half-block terminals cells crossed by a line show it as braille dots.
+
+### Projections
+
+`--proj SPEC` (`:proj` in the viewer, a menu in the desktop app) shows maps in another projection, with meridians and parallels over them (labelled in PNGs):
+
+| SPEC | |
+|---|---|
+| `latlon` | longitude and latitude, plate carrée |
+| `stere north\|south [lon0=L] [lat_ts=T]` | polar stereographic, WGS84; defaults as EPSG:3413 (−45, 70) and 3031 (0, −71) |
+| `laea north\|south [lon0=L]`, `laea LON,LAT` | Lambert azimuthal equal-area, WGS84; at a pole as EASE-Grid 2.0 (EPSG:6931/6932) |
+| `ortho LON,LAT` | a globe centred there |
+| `native` | the grid as stored (the default) |
+
+Where the cells lie comes from the file's CF metadata: a `grid_mapping` (polar stereographic in both variants, Lambert azimuthal equal-area, orthographic, latitude-longitude) with projected x/y in m or km, else 1D latitude and longitude. For files without it, `--grid FILE` takes it from another file with the same grid, and `--grid SPEC` gives the projection of the file's own x/y: CLIMBER-X's NH grids are `--grid "stere north"`. Each pixel goes back through the projections to its cell (nearest or `smooth`), so masks, contours, clicks (now with longitude and latitude) and series work as on the grid; statistics and colour ranges are of the cells shown. `zoom lon=-80:-10 lat=58:85` shows a box; the wheel and a drag zoom and pan in the desktop app. A global latitude-longitude grid can be shown in a polar projection too. The projections are written out in nqv (Snyder 1987) and checked against PROJ.
+
+```bash
+nqv yelmo.nc -v uxy_s --proj "ortho -40,72" --contour "z_srf step=500" --png greenland.png
+nqv ice_NH-16KM.nc --grid "stere north" -v H_ice --proj latlon
+```
 
 ### Recipes
 

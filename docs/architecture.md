@@ -24,7 +24,7 @@ source(s) ─► nqv-core ─► Raster ─► nqv-render ─► RGBA ─► enc
 
 | Crate | Role | Depends on |
 |---|---|---|
-| `nqv-core` | Catalog (files, groups, variables, grids), navigation, slicing, pixel→cell lookup, ranges, probes, diffs, caching, prefetch. No display code. | NetCDF reader, kiddo, rayon |
+| `nqv-core` | Catalog (files, groups, variables, grids), navigation, slicing, pixel→cell lookup, ranges, probes, diffs, caching, prefetch; map projections (`proj`: polar stereographic, Lambert azimuthal equal-area, orthographic, lat-lon, from CF attributes), grid geography (`Catalog::geo`) and views in a projection (`ViewSpec.proj`). No display code. | NetCDF reader |
 | `nqv-render` | Normalisation, colour maps, colour bar, line plots. Pure functions; also builds to WASM. | none |
 | `nqv-session` | View state, commands, recipes, file switching, PNG output; data through a `Backend` trait (`Local`, or `Remote` over ssh). Shared by the terminal app and the Tauri desktop app. | core, render |
 | `nqv-proto` | Protocol (implemented): one request per `Backend` method plus `MapData` (a frame in one round trip), `ListDir`, `Describe`, `Open`; postcard frames with a length prefix and a version handshake; maps quantised to u16 (65535 missing) and LZ4-compressed; `serve` (behind `nqv serve --stdio`) and the `Remote` backend over ssh (`nqv HOST:PATH`); `handoff`, the view `nqv -g` hands to the desktop app over a forwarded socket. | core, session |
@@ -160,6 +160,12 @@ ice:H_ice  t=124/501  [0, 3500] viridis
 ```
 
 `v` variable (fuzzy, across the collection) · `c` colour map · `r` range: auto / symmetric / typed · `/` region and projection · click: value, lon/lat, cell index · space: animate · `s` save PNG + command line · `d` difference with a second variable or file · `o`/`O`/`[`/`]` navigation.
+
+## Projections
+
+A map on its own grid is an index window (`Region`) read with a stride. A map in a projection (`ViewSpec.proj`: a `Target`, projection and bounds) goes the other way: each pixel through the target's inverse to longitude and latitude, then through the grid's forward projection to a fractional cell (arithmetic on uniform axes, a search otherwise; a global longitude axis wraps). The pixel→cell table is kept per grid, target and size, so stepping through time only reads the window of cells it touches. Everything built on `view` (masks, contours, the clicked cell) works unchanged; statistics and colour ranges go back to the cells shown (`native`). The grid's geography comes from its CF `grid_mapping` and projected x/y, else 1D latitude and longitude, else `--grid` (a file, or a projection for the file's own x/y). The projections are written out from Snyder (1987) rather than bound to PROJ, to keep one static binary; tests compare them with PROJ and with Yelmo's `lat2D`/`lon2D`. Meridians and parallels (`graticule`) are segments in pixels, drawn as contours are.
+
+Later: coastlines (Natural Earth, embedded); curvilinear grids known only by 2D latitude and longitude (a KD-tree); masks and contours from a variable on another grid, which the geographic lookup makes possible; more targets (Robinson, Mollweide).
 
 ## Wish list (not in v1)
 
