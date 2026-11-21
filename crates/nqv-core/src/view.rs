@@ -704,6 +704,7 @@ mod tests {
                 long_name: None,
                 units: None,
                 cell_measures: None,
+                grid_mapping: None,
             };
             Self {
                 vars: vec![
@@ -796,6 +797,7 @@ mod tests {
             show: Show::Diff,
             skipped: vec![],
             notes: vec![],
+            grid: None,
         }
     }
 

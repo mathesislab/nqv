@@ -23,6 +23,9 @@ pub struct OpenRequest {
     pub join_dim: Option<String>,
     #[serde(default)]
     pub vs: Vec<PathBuf>,
+    /// A file giving the geography of maps whose files lack it.
+    #[serde(default)]
+    pub grid: Option<PathBuf>,
     /// An ssh host the paths are on.
     pub host: Option<String>,
 }
@@ -33,6 +36,7 @@ pub fn open(req: OpenRequest) -> Result<Session> {
         join: req.join,
         join_dim: req.join_dim,
         vs: req.vs,
+        grid: req.grid,
     };
     match req.host.filter(|h| !h.is_empty()) {
         None => Session::open(&req.paths, &mode),

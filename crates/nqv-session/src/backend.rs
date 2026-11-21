@@ -22,6 +22,8 @@ pub struct OpenMode {
     pub join_dim: Option<String>,
     /// Side B of a comparison of two sets of paths.
     pub vs: Vec<PathBuf>,
+    /// A file giving the geography of maps whose files lack it (`--grid`).
+    pub grid: Option<PathBuf>,
 }
 
 /// One source (a file, files joined, or a pair compared): its label and variables.
@@ -77,11 +79,12 @@ impl CatalogInfo {
         }
     }
 
-    /// Variables to offer for display: all but coordinate variables, source by source.
+    /// Variables to offer for display: all but coordinate and grid mapping variables,
+    /// source by source.
     pub fn data_vars(&self) -> Vec<(VarRef, &VarInfo)> {
         let mut out = vec![];
         for (i, s) in self.sources.iter().enumerate() {
-            for v in s.vars.iter().filter(|v| !v.is_coordinate()) {
+            for v in s.vars.iter().filter(|v| nqv_core::is_data(v, &s.vars)) {
                 let r = VarRef {
                     source: i,
                     name: v.name.clone(),
@@ -207,7 +210,7 @@ impl Local {
             true => Catalog::join(p, mode.join_dim.as_deref()),
             false => Catalog::open(p),
         };
-        let cat = match (mode.diff, mode.vs.is_empty(), paths) {
+        let mut cat = match (mode.diff, mode.vs.is_empty(), paths) {
             (true, false, _) => bail!("use --diff A B or A... --vs B..., not both"),
             (true, true, _) if mode.join => bail!("to compare joined files use -j A... --vs B..."),
             (true, true, [a, b]) => Catalog::compare(a, b)?,
@@ -215,6 +218,9 @@ impl Local {
             (false, false, _) => Catalog::pair(side(paths)?, side(&mode.vs)?)?,
             (false, true, _) => side(paths)?,
         };
+        if let Some(g) = &mode.grid {
+            cat.set_grid(g)?;
+        }
         Ok(Self::new(cat))
     }
 }

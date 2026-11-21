@@ -129,6 +129,11 @@ impl Reader for JoinedReader {
         &self.vars
     }
 
+    /// The first file's: attributes do not differ along a run.
+    fn attributes(&self, var: &str) -> Vec<(String, crate::Attr)> {
+        self.parts[0].reader.attributes(var)
+    }
+
     fn read_slice(
         &self,
         var: &str,
@@ -238,6 +243,7 @@ mod tests {
             long_name: None,
             units: None,
             cell_measures: None,
+            grid_mapping: None,
         };
         Box::new(Piece {
             vars: vec![

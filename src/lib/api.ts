@@ -108,6 +108,7 @@ export type OpenRequest = {
   join?: boolean;
   join_dim?: string | null;
   vs?: string[];
+  grid?: string | null;
   host?: string | null;
 };
 

@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use netcdf_reader::{NcFile, NcSliceInfo, NcSliceInfoElem, NcType, NcVariable};
 
-use crate::{DimInfo, Reader, VarInfo};
+use crate::{Attr, DimInfo, Reader, VarInfo};
 
 pub struct NetcdfReader {
     file: NcFile,
@@ -54,6 +54,22 @@ impl Reader for NetcdfReader {
             .with_context(|| format!("reading {var}"))?;
         Ok(data.iter().map(|&v| v as f32).collect())
     }
+
+    fn attributes(&self, var: &str) -> Vec<(String, Attr)> {
+        let Ok(v) = self.file.variable(var) else {
+            return vec![];
+        };
+        v.attributes()
+            .iter()
+            .filter_map(|a| {
+                let value = match a.value.as_string() {
+                    Some(t) => Attr::Text(t),
+                    None => Attr::Num(a.value.as_f64_vec()?),
+                };
+                Some((a.name.clone(), value))
+            })
+            .collect()
+    }
 }
 
 fn is_numeric(t: &NcType) -> bool {
@@ -80,5 +96,6 @@ fn var_info(v: &NcVariable) -> VarInfo {
         long_name: text("long_name"),
         units: text("units"),
         cell_measures: text("cell_measures"),
+        grid_mapping: text("grid_mapping"),
     }
 }

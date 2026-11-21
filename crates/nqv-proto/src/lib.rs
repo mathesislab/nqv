@@ -16,4 +16,4 @@ pub use crate::remote::{Connection, DEFAULT_REMOTE_CMD, Prompt, Remote};
 pub use crate::server::serve;
 
 /// Protocol version; client and server must agree.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;

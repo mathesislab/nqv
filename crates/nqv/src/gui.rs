@@ -26,6 +26,7 @@ pub fn show(paths: &[PathBuf], mode: &OpenMode, commands: Vec<Command>) -> Resul
         paths: abs(paths)?,
         mode: OpenMode {
             vs: abs(&mode.vs)?,
+            grid: abs(mode.grid.as_slice())?.pop(),
             ..mode.clone()
         },
         commands,

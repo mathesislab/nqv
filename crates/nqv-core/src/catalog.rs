@@ -3,9 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
-use crate::{DimInfo, JoinedReader, NetcdfReader, Reader, VarInfo, record_dim};
+use crate::geo::geo_of;
+use crate::{DimInfo, Geo, JoinedReader, Kind, NetcdfReader, Reader, VarInfo, record_dim};
 
 /// A variable in a catalog: index of its source and its name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -50,6 +51,17 @@ pub struct Catalog {
     pub skipped: Vec<(PathBuf, String)>,
     /// Warnings worth showing, such as time steps out of order between joined files.
     pub notes: Vec<String>,
+    /// A file whose grids give the geography of maps whose own files lack it (`--grid`).
+    pub grid: Option<(PathBuf, Box<dyn Reader>)>,
+}
+
+/// Whether `v` is data to show: neither a coordinate variable nor the grid mapping of
+/// another of `vars`.
+pub fn is_data(v: &VarInfo, vars: &[VarInfo]) -> bool {
+    !v.is_coordinate()
+        && !vars
+            .iter()
+            .any(|o| o.grid_mapping.as_deref() == Some(v.name.as_str()))
 }
 
 /// A directory entry for file browsing.
@@ -226,7 +238,54 @@ impl Catalog {
             show: Show::Diff,
             skipped,
             notes: vec![],
+            grid: None,
         }
+    }
+
+    /// Take the geography of maps without one from the grids of `path` (`--grid`): a
+    /// file with a CF grid mapping and projected coordinates, or latitude-longitude
+    /// coordinates, on grids of the same size.
+    pub fn set_grid(&mut self, path: &Path) -> Result<()> {
+        let r = NetcdfReader::open(path)?;
+        let any = r
+            .variables()
+            .iter()
+            .any(|v| geo_of(&r, v).is_ok_and(|g| g.is_some()));
+        if !any {
+            bail!(
+                "{}: no grid mapping with x/y coordinates, nor latitude and longitude",
+                path.display()
+            );
+        }
+        self.grid = Some((path.to_path_buf(), Box::new(r)));
+        Ok(())
+    }
+
+    /// Where the cells of map variable `r` lie: from its own file, else from the grid
+    /// file of a grid of the same size. None when neither says; an error when the file
+    /// names a projection nqv cannot use.
+    pub fn geo(&self, r: &VarRef) -> Result<Option<Geo>> {
+        let v = self.var(r)?;
+        let reader = self.sources[r.source].reader.as_ref();
+        if let Some(g) = geo_of(reader, v)? {
+            return Ok(Some(g));
+        }
+        let (Some((path, grid)), Kind::Map { y, x }) = (&self.grid, v.kind()) else {
+            return Ok(None);
+        };
+        let size = (v.dims[y].len, v.dims[x].len);
+        for gv in grid.variables() {
+            let Kind::Map { y, x } = gv.kind() else {
+                continue;
+            };
+            if (gv.dims[y].len, gv.dims[x].len) == size
+                && let Some(g) =
+                    geo_of(grid.as_ref(), gv).with_context(|| path.display().to_string())?
+            {
+                return Ok(Some(g));
+            }
+        }
+        Ok(None)
     }
 
     /// Files joined along `dim` (default: the record dimension) into one source; or, for
@@ -345,11 +404,13 @@ impl Catalog {
         }
     }
 
-    /// Variables to offer for display: all but coordinate variables, source by source.
+    /// Variables to offer for display: all but coordinate and grid mapping variables,
+    /// source by source.
     pub fn data_vars(&self) -> Vec<(VarRef, &VarInfo)> {
         let mut out = vec![];
         for (i, s) in self.sources.iter().enumerate() {
-            for v in s.reader.variables().iter().filter(|v| !v.is_coordinate()) {
+            let vars = s.reader.variables();
+            for v in vars.iter().filter(|v| is_data(v, vars)) {
                 out.push((
                     VarRef {
                         source: i,

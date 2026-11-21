@@ -49,6 +49,10 @@ struct Args {
     /// Join files along time; folders: same-named files across them
     #[arg(short, long, help_heading = "Open")]
     join: bool,
+    /// Geography of maps whose files lack it: a file with the grid (CF grid_mapping and
+    /// x/y, or latitude-longitude), matched by grid size
+    #[arg(long, value_name = "FILE", help_heading = "Open")]
+    grid: Option<PathBuf>,
     /// Dimension to join along, instead of the record dimension
     #[arg(long, value_name = "DIM", requires = "join", help_heading = "Open")]
     join_dim: Option<String>,
@@ -266,11 +270,16 @@ fn main() -> Result<()> {
             if !vs.is_empty() && vs_host != host {
                 bail!("--vs paths must be on the same machine as the others");
             }
+            let (grid_host, grid) = split_host(args.grid.as_slice())?;
+            if !grid.is_empty() && grid_host != host {
+                bail!("--grid must be on the same machine as the paths");
+            }
             let mode = OpenMode {
                 diff: args.diff,
                 join: args.join,
                 join_dim: args.join_dim.clone(),
                 vs,
+                grid: grid.into_iter().next(),
             };
             let gui = args.gui || std::env::var("NQV_GUI").is_ok_and(|v| v == "1");
             if gui && args.png.is_none() {

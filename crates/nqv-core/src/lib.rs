@@ -2,6 +2,7 @@
 
 mod catalog;
 mod contour;
+mod geo;
 mod join;
 mod mask;
 mod netcdf;
@@ -11,11 +12,12 @@ mod view;
 use anyhow::Result;
 
 pub use crate::catalog::{
-    Catalog, DirEntry, Other, Show, Source, VarRef, is_netcdf, list_dir, netcdf_files,
+    Catalog, DirEntry, Other, Show, Source, VarRef, is_data, is_netcdf, list_dir, netcdf_files,
 };
 pub use crate::contour::{
     ContourLine, ContourSpec, Levels, Segment, check_contour, contours, nice_ticks,
 };
+pub use crate::geo::Geo;
 pub use crate::join::{JoinedReader, record_dim};
 pub use crate::mask::{Cond, Mask, Op, check_mask};
 pub use crate::netcdf::NetcdfReader;
@@ -64,6 +66,8 @@ pub struct VarInfo {
     pub units: Option<String>,
     /// CF `cell_measures`, e.g. "area: cell_area".
     pub cell_measures: Option<String>,
+    /// CF `grid_mapping`: the variable describing the map projection.
+    pub grid_mapping: Option<String>,
 }
 
 impl VarInfo {
@@ -117,4 +121,10 @@ pub trait Reader: Send + Sync {
         count: &[usize],
         stride: &[usize],
     ) -> Result<Vec<f32>>;
+
+    /// The attributes of any variable (numeric or not, such as a grid mapping); empty
+    /// when there is no such variable.
+    fn attributes(&self, _var: &str) -> Vec<(String, Attr)> {
+        vec![]
+    }
 }

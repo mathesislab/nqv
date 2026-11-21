@@ -816,6 +816,13 @@ impl Session {
         if let Some(d) = &m.join_dim {
             a.extend(["--join-dim".into(), d.clone()]);
         }
+        if let Some(g) = &m.grid {
+            a.push("--grid".into());
+            a.push(match &self.origin.host {
+                Some(h) => format!("{h}:{}", g.display()),
+                None => g.display().to_string(),
+            });
+        }
         let at = |p: &PathBuf| match &self.origin.host {
             Some(h) => format!("{h}:{}", p.display()),
             None => p.display().to_string(),
