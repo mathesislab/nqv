@@ -14,9 +14,10 @@ use crossterm::execute;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 use crate::app::App;
+use nqv_proto::{Connection, Remote};
 use nqv_session::command::{self, Command};
 use nqv_session::recipe;
-use nqv_session::{OpenMode, Session};
+use nqv_session::{OpenMode, Origin, Session};
 
 #[derive(Parser)]
 #[command(
@@ -37,6 +38,9 @@ struct Args {
     /// Compare PATH... (side A) with these paths (side B), opened the same way (-j too)
     #[arg(long, value_name = "PATH", num_args = 1.., help_heading = "Open")]
     vs: Vec<PathBuf>,
+    /// Command that starts the server on a HOST:PATH host (default: nqv, else ~/bin/nqv)
+    #[arg(long, value_name = "CMD", help_heading = "Open")]
+    remote_cmd: Option<String>,
     /// Join files along time; folders: same-named files across them
     #[arg(short, long, help_heading = "Open")]
     join: bool,
@@ -136,6 +140,8 @@ Opening:
   nqv --diff A B              A - B for two files, or for two folders file by file (same names)
   nqv -j FILE...              files joined along time, ordered by their first time value
   nqv -j FOLDER...            same-named files across the folders joined (restart segments)
+  nqv HOST:PATH...            the same, on another machine over ssh: the data is read there
+                              (by nqv serve --stdio), shown here
   nqv A... --vs B...          comparison of two sets of paths, each opened as without --vs;
                               with -j both sides are joined (two segmented runs)
   nqv                         file browser
@@ -240,13 +246,30 @@ fn main() -> Result<()> {
     let app = match args.paths.is_empty() {
         true => None,
         false => {
+            let (host, paths) = split_host(&args.paths)?;
+            let (vs_host, vs) = split_host(&args.vs)?;
+            if !vs.is_empty() && vs_host != host {
+                bail!("--vs paths must be on the same machine as the others");
+            }
             let mode = OpenMode {
                 diff: args.diff,
                 join: args.join,
                 join_dim: args.join_dim.clone(),
-                vs: args.vs.clone(),
+                vs,
             };
-            let mut app = App::new(Session::open(&args.paths, &mode)?);
+            let session = match &host {
+                None => Session::open(&paths, &mode)?,
+                Some(h) => {
+                    let conn = Connection::ssh(h, args.remote_cmd.as_deref())?;
+                    let origin = Origin {
+                        paths: paths.clone(),
+                        mode: mode.clone(),
+                        host: host.clone(),
+                    };
+                    Session::new(Box::new(Remote::open(conn, &paths, &mode)?), origin)?
+                }
+            };
+            let mut app = App::new(session);
             for c in commands(&args).map_err(anyhow::Error::msg)? {
                 app.apply(c).map_err(anyhow::Error::msg)?;
             }
@@ -327,6 +350,33 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
         cmds.push(Command::Contour(command::parse_contour(c)?));
     }
     Ok(cmds)
+}
+
+/// Paths as given, or all on one ssh host as HOST:PATH (scp style): the host and the
+/// paths on it. A path that exists here is never taken as remote.
+fn split_host(paths: &[PathBuf]) -> Result<(Option<String>, Vec<PathBuf>)> {
+    let remote = |p: &PathBuf| -> Option<(String, PathBuf)> {
+        let s = p.to_str()?;
+        let (host, path) = s.split_once(':')?;
+        let ok = !p.exists() && !host.is_empty() && !host.contains('/') && !path.is_empty();
+        ok.then(|| (host.to_string(), PathBuf::from(path)))
+    };
+    let split: Vec<Option<(String, PathBuf)>> = paths.iter().map(remote).collect();
+    if split.iter().all(Option::is_none) {
+        return Ok((None, paths.to_vec()));
+    }
+    let Some(Some((host, _))) = split.first() else {
+        bail!("give all paths on one machine: all HOST:PATH, or all local");
+    };
+    let host = host.clone();
+    let mut out = vec![];
+    for s in split {
+        match s {
+            Some((h, p)) if h == host => out.push(p),
+            _ => bail!("give all paths on one machine: all {host}:PATH, or all local"),
+        }
+    }
+    Ok((Some(host), out))
 }
 
 /// `WIDTHxHEIGHT`, both at least 16.

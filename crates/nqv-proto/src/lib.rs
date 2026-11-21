@@ -5,10 +5,12 @@
 pub mod frame;
 pub mod message;
 pub mod raster;
+pub mod remote;
 pub mod server;
 
 pub use crate::message::{Envelope, Request, Response};
 pub use crate::raster::EncodedRaster;
+pub use crate::remote::{Connection, DEFAULT_REMOTE_CMD, Remote};
 pub use crate::server::serve;
 
 /// Protocol version; client and server must agree.

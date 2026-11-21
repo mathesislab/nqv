@@ -21,6 +21,8 @@ use crate::{fuzzy, recipe};
 pub struct Origin {
     pub paths: Vec<PathBuf>,
     pub mode: OpenMode,
+    /// The ssh host the paths are on (None: this machine).
+    pub host: Option<String>,
 }
 
 /// What a command asks of the front end.
@@ -94,6 +96,7 @@ impl Session {
         let origin = Origin {
             paths: paths.to_vec(),
             mode: mode.clone(),
+            host: None,
         };
         Self::new(Box::new(backend), origin)
     }
@@ -253,6 +256,7 @@ impl Session {
         self.origin = Origin {
             paths: paths.to_vec(),
             mode,
+            host: self.origin.host.clone(),
         };
         self.reset().map_err(|e| format!("{e:#}"))?;
         let candidates: Vec<VarRef> = self
@@ -704,10 +708,14 @@ impl Session {
         if let Some(d) = &m.join_dim {
             a.extend(["--join-dim".into(), d.clone()]);
         }
-        a.extend(self.origin.paths.iter().map(|p| p.display().to_string()));
+        let at = |p: &PathBuf| match &self.origin.host {
+            Some(h) => format!("{h}:{}", p.display()),
+            None => p.display().to_string(),
+        };
+        a.extend(self.origin.paths.iter().map(at));
         if !m.vs.is_empty() {
             a.push("--vs".into());
-            a.extend(m.vs.iter().map(|p| p.display().to_string()));
+            a.extend(m.vs.iter().map(at));
         }
         a.extend(self.settings().into_iter().flat_map(|(_, flags)| flags));
         let quoted: Vec<String> = a.iter().map(|s| command::shell_quote(s)).collect();
