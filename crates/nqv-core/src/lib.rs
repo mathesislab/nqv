@@ -5,6 +5,7 @@ mod contour;
 mod join;
 mod mask;
 mod netcdf;
+mod proj;
 mod view;
 
 use anyhow::Result;
@@ -18,10 +19,18 @@ pub use crate::contour::{
 pub use crate::join::{JoinedReader, record_dim};
 pub use crate::mask::{Cond, Mask, Op, check_mask};
 pub use crate::netcdf::NetcdfReader;
+pub use crate::proj::{Ellipsoid, Projection, StereScale};
 pub use crate::view::{
     Interp, RangeEstimate, Raster, Region, Series, SeriesSpec, Stats, ViewSpec, cell_at,
     finite_range, fit_size, masked, range, series, series_range, stats, value, view,
 };
+
+/// A value of a NetCDF attribute.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Attr {
+    Text(String),
+    Num(Vec<f64>),
+}
 
 /// How a variable is shown, from its dimensions of length other than 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
