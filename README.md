@@ -21,6 +21,7 @@ nqv [PATH...] [options]
 | `--diff run1/ run2/` | comparison of the files with the same name in both folders |
 | `-j a.nc b.nc ...` | the files joined along time (the record dimension) into one, ordered by their first time value |
 | `-j seg1/ seg2/ ...` | the files of the same name across the folders joined, e.g. restart segments |
+| `A... --vs B...` | comparison of two sets of paths, each opened as without `--vs`; with `-j` both sides are joined: `nqv -j run1/seg* --vs run2/seg*` |
 | (none) | file browser |
 
 Everything the viewer shows can be set from the command line; each `:` command in the viewer has a flag:
@@ -34,7 +35,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:cmap NAME` | `--cmap NAME` | colour map: viridis, RdBu_r, grays |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
 | `:show diff\|a\|b` | `--show diff\|a\|b` | comparison side |
-| | `--png FILE [--size WxH]` | write the map to a PNG with a colour bar, without the viewer |
+| | `--png FILE [--size WxH]` | write the view to a PNG without the viewer: a map with axes and colour bar, or a line plot |
 
 VALUE is a coordinate value (`1990`, `-21000`) or a 1-based index `@12` (`@-1` is the last).
 
