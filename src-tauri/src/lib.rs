@@ -253,13 +253,19 @@ async fn apply(
     w: WebviewWindow,
     line: String,
 ) -> Res<(ViewState, Option<String>)> {
-    with(&app, &w, |s| {
-        let msg = match s.apply(command::parse(&line)?)? {
-            Effect::Message(m) => Some(m),
-            Effect::None | Effect::Quit => None,
+    let (out, quit) = with(&app, &w, |s| {
+        let (msg, quit) = match s.apply(command::parse(&line)?)? {
+            Effect::Message(m) => (Some(m), false),
+            Effect::None => (None, false),
+            Effect::Quit => (None, true),
         };
-        Ok((bridge::state(s), msg))
-    })
+        Ok(((bridge::state(s), msg), quit))
+    })?;
+    // `:q` closes the window (its session ends with it), as it quits the terminal viewer.
+    if quit {
+        w.close().map_err(err)?;
+    }
+    Ok(out)
 }
 
 #[tauri::command]
