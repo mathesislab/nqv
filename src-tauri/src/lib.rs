@@ -9,8 +9,11 @@ use std::sync::Mutex;
 use nqv_core::ViewSpec;
 use nqv_session::command;
 use nqv_session::{Effect, Files, LocalFiles, Session};
-use tauri::State;
+use std::time::Duration;
+
 use tauri::ipc::Response;
+use tauri::window::Color;
+use tauri::{AppHandle, Manager, State, Theme};
 
 use crate::bridge::{Colormap, OpenRequest, SeriesView, VarItem, ViewState};
 
@@ -45,6 +48,41 @@ fn on_map(app: &App, f: impl FnOnce(&mut Session, &ViewSpec)) -> Res<ViewState> 
         }
         Ok(bridge::state(s))
     })
+}
+
+/// Show the main window: the page has drawn its first view.
+#[tauri::command]
+fn ready(app: AppHandle) {
+    show(&app);
+}
+
+fn show(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main")
+        && !w.is_visible().unwrap_or(false)
+    {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// The window opens hidden, in the pages' background (--bg, light or dark as the
+/// system is), till the page says it has drawn; or after a while, should it not.
+fn prepare_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let dark = w.theme().is_ok_and(|t| t == Theme::Dark);
+        let bg = if dark {
+            Color(0x1d, 0x1e, 0x20, 0xff)
+        } else {
+            Color(0xff, 0xff, 0xff, 0xff)
+        };
+        let _ = w.set_background_color(Some(bg));
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        let h = app.clone();
+        let _ = app.run_on_main_thread(move || show(&h));
+    });
 }
 
 #[tauri::command]
@@ -191,7 +229,11 @@ async fn save_png(app: State<'_, App>, path: PathBuf, w: u32, h: u32) -> Res<Str
 
 /// Local files named on the command line, opened at start (none: the window asks).
 fn opened_from_args() -> App {
-    let paths: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    // absolute, as a desktop file's %F gives them; a missing one as given, for the message
+    let paths: Vec<PathBuf> = std::env::args_os()
+        .skip(1)
+        .map(|a| std::fs::canonicalize(&a).unwrap_or_else(|_| PathBuf::from(a)))
+        .collect();
     let session = (!paths.is_empty())
         .then(|| {
             bridge::open(OpenRequest {
@@ -211,8 +253,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(opened_from_args())
+        .setup(|app| {
+            prepare_window(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             version,
+            ready,
             open,
             state,
             apply,

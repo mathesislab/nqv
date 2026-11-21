@@ -110,6 +110,8 @@ export type OpenRequest = {
 };
 
 export interface Api {
+  /** Show the window, once its first page is drawn. */
+  ready(): Promise<void>;
   open(req: OpenRequest): Promise<[ViewState, string | null]>;
   state(): Promise<ViewState>;
   apply(line: string): Promise<[ViewState, string | null]>;
@@ -147,6 +149,7 @@ export const tauriApi: Api = {
   setIndex: (dim, index) => invoke("set_index", { dim, index }),
   setVar: (source, name) => invoke("set_var", { source, name }),
   vars: (query) => invoke("vars", { query }),
+  ready: () => invoke("ready"),
   colormaps: () => invoke("colormaps"),
   map: async (w, h) => decodeMap(await invoke<ArrayBuffer>("map", { w, h })),
   series: (points) => invoke("series", { points }),
@@ -183,4 +186,24 @@ export function niceTicks(lo: number, hi: number, n: number): number[] {
   const out: number[] = [];
   for (let k = Math.ceil(lo / step); k <= Math.floor(hi / step); k++) out.push(k * step);
   return out;
+}
+
+/** Copy text: the Clipboard API, else the older copy command (WebKitGTK may lack the
+ * former). */
+export async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // fall through
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  const ok = document.execCommand("copy");
+  area.remove();
+  if (!ok) throw new Error("cannot copy to the clipboard");
 }

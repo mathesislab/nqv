@@ -1,11 +1,11 @@
 <script lang="ts">
-  // The map: drawn with WebGL at the window's pixel size, contours and the clicked cell
+  // The map: drawn with WebGL (else a 2D canvas) at the window's pixel size, contours and the clicked cell
   // drawn over it. Wheel zooms around the pointer, drag pans, click shows a cell's value
   // and series; hovering reports the value under the pointer.
   import { onMount } from "svelte";
   import type { Api, Colormap, MapData, ViewState } from "./api";
   import { fmt } from "./api";
-  import { MapGL } from "./mapgl";
+  import { painter, type Painter } from "./painter";
   import Colorbar from "./Colorbar.svelte";
 
   let {
@@ -15,6 +15,7 @@
     onstate,
     onhover,
     onerror,
+    ondrawn,
   }: {
     api: Api;
     view: ViewState;
@@ -22,12 +23,14 @@
     onstate: (s: ViewState) => void;
     onhover: (text: string) => void;
     onerror: (e: string) => void;
+    /** After each map drawn. */
+    ondrawn?: () => void;
   } = $props();
 
   let box: HTMLDivElement;
   let glCanvas: HTMLCanvasElement;
   let overlay: HTMLCanvasElement;
-  let gl: MapGL | null = null;
+  let gl: Painter | null = null;
   let map: MapData | null = $state(null);
   let size = $state({ w: 0, h: 0 });
 
@@ -44,7 +47,7 @@
   let again = false;
 
   onMount(() => {
-    gl = new MapGL(glCanvas);
+    gl = painter(glCanvas);
     const ro = new ResizeObserver(() => {
       const r = box.getBoundingClientRect();
       size = { w: Math.floor(r.width), h: Math.floor(r.height) };
@@ -69,8 +72,10 @@
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       map = await api.map(Math.round(w * dpr), Math.round((h - 58) * dpr));
       draw();
+      ondrawn?.();
     } catch (e) {
       onerror(String(e));
+      ondrawn?.();
     } finally {
       busy = false;
       if (again) {

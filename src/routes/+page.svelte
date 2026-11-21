@@ -2,9 +2,9 @@
   // The nqv window: toolbar, variables, the map (or line plot) with its colour bar, the
   // series at a clicked cell, sliders for time and levels, a status line, and the same
   // `:` commands as the terminal viewer.
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { save } from "@tauri-apps/plugin-dialog";
-  import { tauriApi as api, fmt } from "$lib/api";
+  import { tauriApi as api, copyText, fmt } from "$lib/api";
   import type { Colormap, SeriesView, ViewState } from "$lib/api";
   import MapView from "$lib/MapView.svelte";
   import SeriesPanel from "$lib/SeriesPanel.svelte";
@@ -22,6 +22,15 @@
   let cmdline: string | null = $state(null);
   let cmdInput: HTMLInputElement | undefined = $state();
 
+  // The window stays hidden till its first page is drawn (no half-drawn page on Linux):
+  // a map once MapView has drawn it, anything else at once.
+  let shown = false;
+  function showWindow() {
+    if (shown) return;
+    shown = true;
+    api.ready();
+  }
+
   onMount(async () => {
     colormaps = await api.colormaps();
     try {
@@ -29,6 +38,8 @@
     } catch {
       opening = true;
     }
+    await tick();
+    if (view?.kind !== "map") requestAnimationFrame(showWindow);
   });
 
   function setState(s: ViewState) {
@@ -68,8 +79,12 @@
 
   async function copyCommand() {
     if (!view) return;
-    await navigator.clipboard.writeText(view.command_line);
-    message = "copied: " + view.command_line;
+    try {
+      await copyText(view.command_line);
+      message = "copied: " + view.command_line;
+    } catch (e) {
+      error = String(e);
+    }
   }
 
   function key(e: KeyboardEvent) {
@@ -158,7 +173,7 @@
     <main class:with-series={view.kind === "map" && series}>
       {#if view.kind === "map"}
         <div class="plot">
-          <MapView {api} {view} {colormaps} onstate={setState} onhover={(t) => (hover = t)} onerror={(e) => (error = e)} />
+          <MapView {api} {view} {colormaps} onstate={setState} onhover={(t) => (hover = t)} onerror={(e) => (error = e)} ondrawn={showWindow} />
         </div>
         {#if series}
           <div class="panel">
