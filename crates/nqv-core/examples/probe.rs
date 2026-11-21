@@ -3,7 +3,7 @@
 //! `PROBE_SIZE=WxH` (default 400x200).
 use std::time::Instant;
 
-use nqv_core::{Catalog, Kind, SeriesSpec, ViewSpec, finite_range, series, value, view};
+use nqv_core::{Catalog, Kind, Mask, SeriesSpec, ViewSpec, finite_range, series, value, view};
 
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -34,6 +34,7 @@ fn main() -> anyhow::Result<()> {
                     var: r.clone(),
                     index,
                     size,
+                    mask: Mask::default(),
                 };
                 view(&cat, &spec)
                     .map(|r| format!("map {}x{} {:?}", r.w, r.h, finite_range(&r.values)))
@@ -44,6 +45,7 @@ fn main() -> anyhow::Result<()> {
                     along,
                     index,
                     max_points: 2000,
+                    mask: Mask::default(),
                 };
                 series(&cat, &spec)
                     .map(|s| format!("series {} {:?}", s.y.len(), finite_range(&s.y)))

@@ -2,25 +2,28 @@
 
 use anyhow::{Result, bail, ensure};
 
-use crate::{Catalog, DimInfo, Kind, Show, VarInfo, VarRef};
+use crate::mask::{check_mask, mask_index, mask_show};
+use crate::{Catalog, DimInfo, Kind, Mask, Show, VarInfo, VarRef};
 
 /// A map view: a variable, one index per dimension, and the output size in pixels.
-/// Indices at the two map dimensions are ignored.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Indices at the two map dimensions are ignored. Values hidden by `mask` are NaN.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ViewSpec {
     pub var: VarRef,
     pub index: Vec<usize>,
     pub size: (u32, u32),
+    pub mask: Mask,
 }
 
 /// A line view: values along dimension `along`, other dimensions fixed by `index`.
 /// Reads with a stride so that at most about `2 * max_points` points are returned.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SeriesSpec {
     pub var: VarRef,
     pub along: usize,
     pub index: Vec<usize>,
     pub max_points: usize,
+    pub mask: Mask,
 }
 
 /// Values on the view's pixel grid, row 0 at the top. NaN marks missing data.
@@ -187,6 +190,21 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
         let r = s.row(py);
         values.extend(cols.iter().map(|&c| at(r, c)));
     }
+    if !spec.mask.is_empty() {
+        check_mask(cat, &spec.var, &spec.mask)?;
+        let mut cond_values = vec![];
+        for c in &spec.mask.conds {
+            let m = cat.var(&c.var)?;
+            let mspec = ViewSpec {
+                var: c.var.clone(),
+                index: mask_index(var, &spec.index, m)?,
+                size: spec.size,
+                mask: Mask::default(),
+            };
+            cond_values.push(view_as(cat, &mspec, mask_show(show))?.values);
+        }
+        spec.mask.apply(&mut values, &cond_values);
+    }
     Ok(Raster {
         w: s.w as u32,
         h: s.h as u32,
@@ -282,7 +300,31 @@ fn series_as(cat: &Catalog, spec: &SeriesSpec, show: Show) -> Result<Series> {
     let mut count = vec![1; var.dims.len()];
     let mut stride = vec![1; var.dims.len()];
     (start[spec.along], count[spec.along], stride[spec.along]) = (0, n, st);
-    let y = cat.read_as(show, &spec.var, &start, &count, &stride)?;
+    let mut y = cat.read_as(show, &spec.var, &start, &count, &stride)?;
+    if !spec.mask.is_empty() {
+        check_mask(cat, &spec.var, &spec.mask)?;
+        let mut cond_values = vec![];
+        for c in &spec.mask.conds {
+            let m = cat.var(&c.var)?;
+            let index = mask_index(var, &spec.index, m)?;
+            let along = m.dims.iter().position(|d| d.name == dim.name);
+            cond_values.push(match along {
+                Some(along) => {
+                    let mspec = SeriesSpec {
+                        var: c.var.clone(),
+                        along,
+                        index,
+                        max_points: spec.max_points,
+                        mask: Mask::default(),
+                    };
+                    series_as(cat, &mspec, mask_show(show))?.y
+                }
+                // Constant along the series: one value for every point.
+                None => vec![value_as(cat, &c.var, &index, mask_show(show))?; n],
+            });
+        }
+        spec.mask.apply(&mut y, &cond_values);
+    }
     let x = match cat.coord_var(spec.var.source, dim) {
         Some(_) => {
             let c = VarRef {
@@ -298,10 +340,31 @@ fn series_as(cat: &Catalog, spec: &SeriesSpec, show: Show) -> Result<Series> {
 
 /// Single value of a variable at `index`.
 pub fn value(cat: &Catalog, var: &VarRef, index: &[usize]) -> Result<f32> {
+    value_as(cat, var, index, cat.show)
+}
+
+fn value_as(cat: &Catalog, var: &VarRef, index: &[usize], show: Show) -> Result<f32> {
     let v = cat.var(var)?;
     check_index(v, index, &[])?;
     let one = vec![1; index.len()];
-    Ok(cat.read(var, index, &one, &one)?[0])
+    Ok(cat.read_as(show, var, index, &one, &one)?[0])
+}
+
+/// Whether `mask` hides the value of `var` at `index`.
+pub fn masked(cat: &Catalog, var: &VarRef, index: &[usize], mask: &Mask) -> Result<bool> {
+    if mask.is_empty() {
+        return Ok(false);
+    }
+    check_mask(cat, var, mask)?;
+    let v = cat.var(var)?;
+    for c in &mask.conds {
+        let m = cat.var(&c.var)?;
+        let x = value_as(cat, &c.var, &mask_index(v, index, m)?, mask_show(cat.show))?;
+        if !c.holds(x) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Source index for output index `i` of `n` when sampling `m` source points.
@@ -328,7 +391,7 @@ fn y_decreasing(cat: &Catalog, source: usize, ydim: &DimInfo) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Kind, Other, Reader, Show, Source, VarInfo};
+    use crate::{Cond, Kind, Op, Other, Reader, Show, Source, VarInfo};
     use std::path::PathBuf;
 
     /// In-memory reader: variable "f"(t, y, x) with f = 100 t + 10 y + x, and coordinate y.
@@ -359,6 +422,7 @@ mod tests {
                 vars: vec![
                     v("f", vec![d("t", nt), d("y", ny), d("x", nx)]),
                     v("y", vec![d("y", ny)]),
+                    v("g", vec![d("y", ny), d("x", nx)]),
                 ],
                 nt,
                 ny,
@@ -390,6 +454,12 @@ mod tests {
                             idx(0, i) as f32
                         }
                     })
+                    .collect());
+            }
+            if var == "g" {
+                // g = 10 y + x
+                return Ok((0..c[0])
+                    .flat_map(|j| (0..c[1]).map(move |i| (10 * idx(0, j) + idx(1, i)) as f32))
                     .collect());
             }
             assert!(
@@ -453,6 +523,7 @@ mod tests {
             var: vr("f"),
             index: vec![1, 0, 0],
             size: (4, 3),
+            mask: Mask::default(),
         };
         assert!(view(&c, &spec).unwrap().values.iter().all(|&v| v == -5.0));
         // Coordinates are not differenced: increasing y still puts y = 2 on top.
@@ -469,6 +540,7 @@ mod tests {
             along: 0,
             index: vec![0, 0, 0],
             max_points: 10,
+            mask: Mask::default(),
         };
         let series_a = series(&c, &s).unwrap();
         assert_eq!(series_range(&c, &s, &series_a), Some((0.0, 105.0)));
@@ -479,12 +551,85 @@ mod tests {
         assert_eq!(value(&c, &vr("f"), &[1, 2, 3]).unwrap(), 128.0);
     }
 
+    fn cond(var: &str, op: Op, values: &[f32]) -> Cond {
+        Cond {
+            var: vr(var),
+            op,
+            values: values.to_vec(),
+        }
+    }
+
+    #[test]
+    fn mask_hides_where_all_conditions_hold() {
+        let c = cat(Mem::new(2, 3, 4, true)); // y decreasing: rows in index order
+        let spec = |conds| ViewSpec {
+            var: vr("f"),
+            index: vec![1, 0, 0],
+            size: (4, 3),
+            mask: Mask { conds },
+        };
+        // g = 10 y + x: hide g >= 21, i.e. row 2 from x = 1.
+        let r = view(&c, &spec(vec![cond("g", Op::Ge, &[21.0])])).unwrap();
+        let hidden: Vec<usize> = (0..12).filter(|&i| r.values[i].is_nan()).collect();
+        assert_eq!(hidden, [9, 10, 11]);
+        // Comma values: hide g in {0, 1}; with a second condition only where both hold.
+        let r = view(&c, &spec(vec![cond("g", Op::Eq, &[0.0, 1.0])])).unwrap();
+        assert!(r.values[0].is_nan() && r.values[1].is_nan() && !r.values[2].is_nan());
+        let both = vec![cond("g", Op::Eq, &[0.0, 1.0]), cond("g", Op::Gt, &[0.0])];
+        let r = view(&c, &spec(both)).unwrap();
+        assert!(!r.values[0].is_nan() && r.values[1].is_nan());
+        // The range covers visible cells only: f = 100 + g, g < 21 visible.
+        let rg = range(&c, &spec(vec![cond("g", Op::Ge, &[21.0])])).unwrap();
+        assert_eq!((rg.min, rg.max), (100.0, 120.0));
+        // != hides everything but the listed values.
+        let r = view(&c, &spec(vec![cond("g", Op::Ne, &[23.0])])).unwrap();
+        assert_eq!(r.values.iter().filter(|v| !v.is_nan()).count(), 1);
+    }
+
+    #[test]
+    fn mask_on_series_and_values() {
+        let c = cat(Mem::new(3, 3, 4, true));
+        let spec = |conds| SeriesSpec {
+            var: vr("f"),
+            along: 0,
+            index: vec![0, 2, 3],
+            max_points: 10,
+            mask: Mask { conds },
+        };
+        // g is constant along t: at (2, 3) g = 23, so g > 20 hides the whole series.
+        let s = series(&c, &spec(vec![cond("g", Op::Gt, &[20.0])])).unwrap();
+        assert!(s.y.iter().all(|v| v.is_nan()));
+        let s = series(&c, &spec(vec![cond("g", Op::Lt, &[20.0])])).unwrap();
+        assert!(s.y.iter().all(|v| !v.is_nan()));
+        let m = Mask {
+            conds: vec![cond("g", Op::Eq, &[23.0])],
+        };
+        assert!(masked(&c, &vr("f"), &[1, 2, 3], &m).unwrap());
+        assert!(!masked(&c, &vr("f"), &[1, 2, 2], &m).unwrap());
+    }
+
+    #[test]
+    fn mask_off_grid_is_an_error() {
+        let c = cat(Mem::new(2, 3, 4, true));
+        let spec = ViewSpec {
+            var: vr("f"),
+            index: vec![0, 0, 0],
+            size: (4, 3),
+            mask: Mask {
+                conds: vec![cond("y", Op::Gt, &[0.0])],
+            },
+        };
+        let e = view(&c, &spec).unwrap_err().to_string();
+        assert!(e.contains("not on the grid"), "{e}");
+    }
+
     #[test]
     fn compare_errors_on_mismatch() {
         let spec = ViewSpec {
             var: vr("f"),
             index: vec![0, 0, 0],
             size: (4, 3),
+            mask: Mask::default(),
         };
         let c = compare(Mem::new(2, 3, 4, false), Some(Mem::new(3, 3, 4, false)));
         let e = view(&c, &spec).unwrap_err().to_string();
@@ -503,6 +648,7 @@ mod tests {
                 var: vr("f"),
                 index: vec![1, 0, 0],
                 size: (4, 3),
+                mask: Mask::default(),
             },
         )
         .unwrap();
@@ -519,6 +665,7 @@ mod tests {
                 var: vr("f"),
                 index: vec![0, 0, 0],
                 size: (4, 3),
+                mask: Mask::default(),
             },
         )
         .unwrap();
@@ -534,6 +681,7 @@ mod tests {
                 var: vr("f"),
                 index: vec![0, 0, 0],
                 size: (4, 2),
+                mask: Mask::default(),
             },
         )
         .unwrap();
@@ -558,6 +706,7 @@ mod tests {
                     var: vr("f"),
                     index: vec![1, 0, 0],
                     size,
+                    mask: Mask::default(),
                 };
                 let r = view(&c, &spec).unwrap();
                 for py in 0..r.h {
@@ -582,6 +731,7 @@ mod tests {
             var: vr("f"),
             index: vec![0, 0, 0],
             size,
+            mask: Mask::default(),
         };
         let up = cat(Mem::new(1, 3, 4, false));
         assert_eq!(cell_at(&up, &spec((4, 3)), (0, 0)), Some((2, 0))); // top is last row
@@ -594,6 +744,7 @@ mod tests {
             var: vr("y"),
             index: vec![0],
             size: (4, 3),
+            mask: Mask::default(),
         };
         assert_eq!(cell_at(&down, &not_map, (0, 0)), None);
     }
@@ -616,6 +767,7 @@ mod tests {
             along: 0,
             index: vec![0, 2, 3],
             max_points: 100,
+            mask: Mask::default(),
         };
         let s = series(&c, &spec).unwrap();
         assert_eq!(s.y, [23.0, 123.0, 223.0, 323.0, 423.0]);
@@ -647,6 +799,7 @@ mod tests {
                 var: vr("f"),
                 index: vec![0, 0, 0],
                 size: (4, 3),
+                mask: Mask::default(),
             },
         )
         .unwrap_err();

@@ -2,6 +2,7 @@
 
 mod catalog;
 mod join;
+mod mask;
 mod netcdf;
 mod view;
 
@@ -11,10 +12,11 @@ pub use crate::catalog::{
     Catalog, DirEntry, Other, Show, Source, VarRef, is_netcdf, list_dir, netcdf_files,
 };
 pub use crate::join::{JoinedReader, record_dim};
+pub use crate::mask::{Cond, Mask, Op, check_mask};
 pub use crate::netcdf::NetcdfReader;
 pub use crate::view::{
-    RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, cell_at, finite_range, fit_size, range,
-    series, series_range, value, view,
+    RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, cell_at, finite_range, fit_size, masked,
+    range, series, series_range, value, view,
 };
 
 /// How a variable is shown, from its dimensions of length other than 1.

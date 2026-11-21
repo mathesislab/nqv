@@ -6,8 +6,8 @@ use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
-    Catalog, Kind, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at,
-    fit_size, netcdf_files, range, series, series_range, value, view,
+    Catalog, Kind, Mask, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec,
+    cell_at, fit_size, netcdf_files, range, series, series_range, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, colorize};
 use ratatui::DefaultTerminal;
@@ -621,6 +621,7 @@ impl App {
             var: self.var.clone(),
             index: self.index.clone(),
             size: fit_size(nx, ny, max_w, max_h),
+            mask: Mask::default(),
         };
         match view(&self.cat, &spec).and_then(|r| Ok((r, range(&self.cat, &spec)?))) {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),
@@ -662,6 +663,7 @@ impl App {
             along,
             index,
             max_points: 2 * area.width as usize,
+            mask: Mask::default(),
         };
         match series(&self.cat, &spec) {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),
