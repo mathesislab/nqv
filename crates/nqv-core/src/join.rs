@@ -237,6 +237,7 @@ mod tests {
             dims,
             long_name: None,
             units: None,
+            cell_measures: None,
         };
         Box::new(Piece {
             vars: vec![

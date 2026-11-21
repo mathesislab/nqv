@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail, ensure};
 
-use crate::mask::{check_mask, mask_index, mask_show};
+use crate::mask::{check_mask, check_overlay, mask_index, mask_show};
 use crate::{Catalog, DimInfo, Kind, Mask, Show, VarInfo, VarRef};
 
 /// A map view: a variable, one index per dimension, and the output size in pixels.
@@ -311,15 +311,15 @@ pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize,
 }
 
 /// Statistics of a map slice: finite (visible) values only.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Stats {
     pub min: f32,
     pub max: f32,
-    /// Mean and standard deviation; area-weighted (by the cosine of latitude) on
-    /// latitude-longitude grids, else unweighted.
+    /// Mean and standard deviation, weighted as `weighted_by` says (unweighted if None).
     pub mean: f64,
     pub std: f64,
-    pub weighted: bool,
+    /// The cell-area variable used as weights, or "cos(lat)" on latitude-longitude grids.
+    pub weighted_by: Option<String>,
     /// Cells with a value, and all cells looked at (the rest missing or masked).
     pub valid: usize,
     pub total: usize,
@@ -350,26 +350,48 @@ pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
             ..spec.clone()
         },
     )?;
-    // Weight per output row: cos(latitude) on latitude-longitude grids.
-    let lat = latitudes(cat, &spec.var, y);
-    let row_weight = |py: u32| -> f64 {
-        let Some(lat) = &lat else { return 1.0 };
-        let cell = cell_at(
-            cat,
-            &ViewSpec {
-                size,
-                ..spec.clone()
-            },
-            (0, py),
-        );
-        cell.and_then(|(cy, _)| lat.get(cy))
-            .map_or(0.0, |l| (*l as f64).to_radians().cos().max(0.0))
+    // Weights per pixel: a cell-area variable, else cos(latitude) on latitude-longitude
+    // grids, else equal.
+    let sized = ViewSpec {
+        size,
+        ..spec.clone()
     };
-    let weights: Vec<f64> = (0..r.h).map(row_weight).collect();
+    let (weights, weighted_by): (Vec<f64>, Option<String>) = match area_var(cat, &spec.var) {
+        Some(a) => {
+            let aspec = ViewSpec {
+                index: mask_index(var, &spec.index, cat.var(&a)?)?,
+                var: a.clone(),
+                mask: Mask::default(),
+                interp: Interp::Nearest,
+                ..sized.clone()
+            };
+            let w = view_as(cat, &aspec, mask_show(cat.show))?.values;
+            let w = w.iter().map(|&v| {
+                if v.is_finite() {
+                    v.max(0.0) as f64
+                } else {
+                    0.0
+                }
+            });
+            (w.collect(), Some(a.name))
+        }
+        None => match latitudes(cat, &spec.var, y) {
+            Some(lat) => {
+                let row = |py: u32| {
+                    cell_at(cat, &sized, (0, py))
+                        .and_then(|(cy, _)| lat.get(cy))
+                        .map_or(0.0, |l| (*l as f64).to_radians().cos().max(0.0))
+                };
+                let rows: Vec<f64> = (0..r.h).map(row).collect();
+                let w = (0..r.values.len()).map(|k| rows[k / r.w as usize]);
+                (w.collect(), Some("cos(lat)".into()))
+            }
+            None => (vec![1.0; r.values.len()], None),
+        },
+    };
     let (mut sw, mut swx, mut n) = (0.0, 0.0, 0);
-    for (k, &v) in r.values.iter().enumerate() {
+    for (&v, &w) in r.values.iter().zip(&weights) {
         if v.is_finite() {
-            let w = weights[k / r.w as usize];
             sw += w;
             swx += w * v as f64;
             n += 1;
@@ -377,9 +399,9 @@ pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
     }
     let mean = swx / sw;
     let mut swd = 0.0;
-    for (k, &v) in r.values.iter().enumerate() {
+    for (&v, &w) in r.values.iter().zip(&weights) {
         if v.is_finite() {
-            swd += weights[k / r.w as usize] * (v as f64 - mean).powi(2);
+            swd += w * (v as f64 - mean).powi(2);
         }
     }
     let var_ = swd / sw;
@@ -389,11 +411,43 @@ pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
         max,
         mean: if sw > 0.0 { mean } else { f64::NAN },
         std: if sw > 0.0 { var_.sqrt() } else { f64::NAN },
-        weighted: lat.is_some(),
+        weighted_by,
         valid: n,
         total: r.values.len(),
         exact,
     })
+}
+
+/// Names of cell-area variables looked for when `cell_measures` does not name one.
+const AREA_NAMES: [&str; 4] = ["area", "cell_area", "areacella", "areacello"];
+
+/// The cell-area variable for `var`: the one its CF `cell_measures` names, else one of
+/// `AREA_NAMES`; in the same file and on the same map grid.
+fn area_var(cat: &Catalog, var: &VarRef) -> Option<VarRef> {
+    let v = cat.var(var).ok()?;
+    let named = v.cell_measures.as_deref().and_then(|m| {
+        let mut words = m.split_whitespace();
+        while let Some(w) = words.next() {
+            if w == "area:" {
+                return words.next().map(String::from);
+            }
+        }
+        None
+    });
+    let names = named
+        .into_iter()
+        .chain(AREA_NAMES.iter().map(|s| s.to_string()));
+    names
+        .map(|name| VarRef {
+            source: var.source,
+            name,
+        })
+        .find(|a| {
+            a.name != var.name
+                && cat.var(a).is_ok_and(|m| {
+                    matches!(m.kind(), Kind::Map { .. }) && check_overlay(v, m, "area").is_ok()
+                })
+        })
 }
 
 /// Latitudes of the rows of `var`'s map dimension `y`, when it is a latitude coordinate
@@ -606,12 +660,14 @@ mod tests {
                 dims,
                 long_name: None,
                 units: None,
+                cell_measures: None,
             };
             Self {
                 vars: vec![
                     v("f", vec![d("t", nt), d("y", ny), d("x", nx)]),
                     v("y", vec![d("y", ny)]),
                     v("g", vec![d("y", ny), d("x", nx)]),
+                    v("area", vec![d("y", ny), d("x", nx)]),
                 ],
                 nt,
                 ny,
@@ -645,6 +701,12 @@ mod tests {
                         };
                         v * self.y_scale
                     })
+                    .collect());
+            }
+            if var == "area" {
+                // 1 in column 0, 3 in column 1, ...
+                return Ok((0..c[0])
+                    .flat_map(|_| (0..c[1]).map(move |i| (1 + 2 * idx(1, i)) as f32))
                     .collect());
             }
             if var == "g" {
@@ -851,19 +913,37 @@ mod tests {
             mask: Mask::default(),
             interp: Interp::Nearest,
         };
+        // The area variable comes first: columns weighted 1 : 3, f = 10 y + x.
         let s = stats(&c, &spec).unwrap();
-        assert!(s.weighted);
-        // Row means 0.5 and 10.5, weighted 1 : 1/2.
+        assert_eq!(s.weighted_by.as_deref(), Some("area"));
+        let want = (0.0 + 3.0 * 1.0 + 10.0 + 3.0 * 11.0) / 8.0;
+        assert!((s.mean - want).abs() < 1e-5, "{} vs {want}", s.mean);
+        // Without it, cos(lat): row means 0.5 and 10.5 weighted 1 : 1/2.
+        let mut c = c;
+        c.sources[0].reader = {
+            let mut m = Mem::new(1, 2, 2, false);
+            m.y_scale = 60.0;
+            m.vars[1].units = Some("degrees_north".into());
+            m.vars.retain(|v| v.name != "area");
+            Box::new(m)
+        };
+        let s = stats(&c, &spec).unwrap();
+        assert_eq!(s.weighted_by.as_deref(), Some("cos(lat)"));
         let want = (0.5 + 10.5 * 0.5) / 1.5;
         assert!((s.mean - want).abs() < 1e-5, "{} vs {want}", s.mean);
-        // Without latitude units: unweighted.
-        let s = stats(&cat(Mem::new(1, 2, 2, false)), &spec).unwrap();
-        assert!(!s.weighted && (s.mean - 5.5).abs() < 1e-9);
+        // Neither: unweighted.
+        let mut m = Mem::new(1, 2, 2, false);
+        m.vars.retain(|v| v.name != "area");
+        let s = stats(&cat(m), &spec).unwrap();
+        assert!(s.weighted_by.is_none() && (s.mean - 5.5).abs() < 1e-9);
     }
 
     #[test]
     fn slice_statistics() {
-        let c = cat(Mem::new(2, 3, 4, true));
+        // Without a cell-area variable, so unweighted.
+        let mut m = Mem::new(2, 3, 4, true);
+        m.vars.retain(|v| v.name != "area");
+        let c = cat(m);
         let spec = |conds| ViewSpec {
             var: vr("f"),
             index: vec![1, 0, 0],

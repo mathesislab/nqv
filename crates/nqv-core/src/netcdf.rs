@@ -79,5 +79,6 @@ fn var_info(v: &NcVariable) -> VarInfo {
             .collect(),
         long_name: text("long_name"),
         units: text("units"),
+        cell_measures: text("cell_measures"),
     }
 }

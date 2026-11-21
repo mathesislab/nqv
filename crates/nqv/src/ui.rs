@@ -325,7 +325,10 @@ fn draw_stats(f: &mut Frame, r: Rect, st: &Stats, units: Option<&str>) {
         let text = format!(
             "{approx}min {}  mean{} {}  max {}  std {}  cells {} ({share:.0}%){}",
             fmt(st.min),
-            if st.weighted { "(area)" } else { "" },
+            st.weighted_by
+                .as_ref()
+                .map(|w| format!(" (by {w})"))
+                .unwrap_or_default(),
             fmt(st.mean as f32),
             fmt(st.max),
             fmt(st.std as f32),
@@ -343,6 +346,10 @@ fn draw_stats(f: &mut Frame, r: Rect, st: &Stats, units: Option<&str>) {
         ])
     };
     let share = 100.0 * st.valid as f64 / st.total.max(1) as f64;
+    let mark = |k: &str| match st.weighted_by {
+        Some(_) => format!("{k}*"),
+        None => k.to_string(),
+    };
     let mut lines = vec![
         Line::raw(match units {
             Some(u) => format!("slice [{u}]"),
@@ -350,16 +357,13 @@ fn draw_stats(f: &mut Frame, r: Rect, st: &Stats, units: Option<&str>) {
         })
         .bold(),
         row("min", fmt(st.min)),
-        row(
-            if st.weighted { "mean*" } else { "mean" },
-            fmt(st.mean as f32),
-        ),
+        row(&mark("mean"), fmt(st.mean as f32)),
         row("max", fmt(st.max)),
-        row(if st.weighted { "std*" } else { "std" }, fmt(st.std as f32)),
+        row(&mark("std"), fmt(st.std as f32)),
         row("cells", format!("{} ({share:.0}%)", count(st.valid))),
     ];
-    if st.weighted {
-        lines.push(Line::raw("* area-weighted").dim());
+    if let Some(w) = &st.weighted_by {
+        lines.push(Line::raw(format!("* weighted by {w}")).dim());
     }
     if !st.exact {
         lines.push(Line::raw("~ from a sample").dim());

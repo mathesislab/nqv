@@ -90,7 +90,7 @@ The mask variable is looked up by exact name in the current file, then in the ot
 
 Joined files must have the same variables and dimensions apart from the time length; time steps out of order between files give a warning. In a comparison, variables missing in the second file, or with different dimensions, show an error instead of a plot.
 
-Beside a map (or on a line below it when there is no room) the terminal shows statistics of the slice: min, mean, max, standard deviation and the share of cells with a value, after masking. On latitude-longitude grids (y coordinate in degrees north, or named lat/latitude) mean and standard deviation are weighted by the cosine of latitude (marked *); on other grids they are unweighted. Slices over 4 million cells are sampled (marked ~).
+Beside a map (or on a line below it when there is no room) the terminal shows statistics of the slice: min, mean, max, standard deviation and the share of cells with a value, after masking. Mean and standard deviation are weighted (marked *, with what by): by the cell-area variable named in the CF `cell_measures` attribute, else by a variable called `area`, `cell_area`, `areacella` or `areacello` on the same grid in the same file, else by the cosine of latitude on latitude-longitude grids (y coordinate in degrees north, or named lat/latitude); otherwise they are unweighted. Slices over 4 million cells are sampled (marked ~).
 
 Graphics output is detected at start. Terminals without an image protocol (Terminal.app, GNOME Terminal, anything under tmux) get half-block characters. Set a default with `NQV_GFX`, e.g. `export NQV_GFX=blocks256` for terminals without true colour.
 

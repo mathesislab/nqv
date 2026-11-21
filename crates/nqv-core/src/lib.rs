@@ -50,6 +50,8 @@ pub struct VarInfo {
     pub dims: Vec<DimInfo>,
     pub long_name: Option<String>,
     pub units: Option<String>,
+    /// CF `cell_measures`, e.g. "area: cell_area".
+    pub cell_measures: Option<String>,
 }
 
 impl VarInfo {
