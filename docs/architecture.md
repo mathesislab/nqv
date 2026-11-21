@@ -81,6 +81,15 @@ Reference case, a CLIMBER-X run on Albedo (`.../climber-x/output/lgm_ice_nh_coor
 
 Variables on different grids can still be combined *for display*, because each becomes a `Raster` on the same view pixel grid. That makes cross-grid masking, differences and overlays possible when both grids have geographic coordinates. The result is a nearest-pixel approximation, which is fine for viewing.
 
+### Comparisons
+
+Two files, or two folders, open as a comparison (implemented):
+
+- Folders are paired file by file, by name. Files only in the second folder are reported as not opened.
+- `Catalog::read` returns A, B or A − B according to `Catalog::show` (`d` cycles them), so maps, series, values and clicked cells work unchanged. Coordinate variables are never differenced.
+- A variable missing from B, or with different dimensions there, gives an error in place of the plot. Comparing different grids or record lengths (common time prefix, regridding through the Raster) is left for later.
+- A − B opens with a diverging colour map and a symmetric range; A and B with viridis and their own range.
+
 ## Navigation
 
 Navigation lives in the core and the protocol, so every front end can change file or folder without going back to the shell.
@@ -92,7 +101,7 @@ Navigation lives in the core and the protocol, so every front end can change fil
 
 ## Launch
 
-- `nqv file.nc [var]`, `nqv run/*.nc`, `nqv .` (collection), `nqv` (browser on cwd).
+- `nqv file.nc [var]`, `nqv run/` (collection), `nqv a.nc b.nc` or `nqv run1/ run2/` (comparison), `nqv f1 f2 f3 ...` (collection), `nqv` (browser on cwd). Stitching files along time is not implemented yet.
 - `nqv f.nc temp -t -1 -z 100 --region arctic`: jump straight to a view. Every view can print the command line that reproduces it.
 - Opener for `.nc` in yazi/lf/ranger; target for fzf.
 - **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Works on Albedo and Levante; see Verified.)
