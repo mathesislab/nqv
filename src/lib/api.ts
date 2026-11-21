@@ -46,6 +46,7 @@ export type ViewState = {
   zoomed: boolean;
   proj: string | null;
   centre: [number, number] | null;
+  coast: boolean;
   probe: ProbeView | null;
   command_line: string;
 };
@@ -87,6 +88,7 @@ export type MapHeader = {
   ticks: [number, string][];
   contours: number[];
   grid: number[];
+  coast: number[];
   labels: [number, number, string][];
   stats: StatsView | null;
 };

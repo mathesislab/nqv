@@ -87,18 +87,17 @@ fn answer(local: &mut Option<Local>, req: Request) -> Response {
         Request::CheckOverlay { var, mask, contour } => b
             .check_overlay(&var, &mask, contour.as_ref())
             .map_or_else(err, |_| Response::Done),
-        Request::MapData {
-            spec,
-            contour,
-            with_stats,
-        } => b
-            .map_data(&spec, contour.as_ref(), with_stats)
-            .map_or_else(err, |p| Response::Map {
-                raster: EncodedRaster::encode(&p.raster),
-                range: p.range,
-                contours: p.contours,
-                stats: p.stats,
-            }),
+        Request::MapData { spec, extras } => {
+            b.map_data(&spec, &extras)
+                .map_or_else(err, |p| Response::Map {
+                    raster: EncodedRaster::encode(&p.raster),
+                    range: p.range,
+                    contours: p.contours,
+                    stats: p.stats,
+                    coast: p.coast,
+                })
+        }
+        Request::Coast(spec) => Response::Coast(b.coastlines(&spec)),
         Request::Hello { .. }
         | Request::Open { .. }
         | Request::ListDir(_)

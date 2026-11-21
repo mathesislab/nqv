@@ -106,3 +106,17 @@ fn wheel_and_drag() {
     s.zoom_at(&spec, 10, 10, 8.0);
     assert_eq!(s.target.unwrap().bounds, before.bounds);
 }
+
+#[test]
+fn coastlines_on_and_off() {
+    let mut s = yelmo();
+    let size = s.map_size(300, 300).unwrap();
+    assert!(
+        !s.map(size, false).unwrap().coast.is_empty(),
+        "on by default"
+    );
+    s.apply(parse("coast off").unwrap()).unwrap();
+    assert!(s.map(size, false).unwrap().coast.is_empty());
+    assert!(s.command_line().contains("--coast off"));
+    assert!(parse("coast maybe").is_err());
+}

@@ -110,6 +110,7 @@ impl Session {
                     .contours
                     .iter()
                     .flat_map(|l| l.segments.iter().copied())
+                    .chain(m.coast.iter().copied())
                     .collect();
                 draw_lines(&mut image, &segments);
                 // Round coordinate values (or 1-based indices) as ticks, placed linearly

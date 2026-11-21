@@ -3,10 +3,10 @@
 use std::path::PathBuf;
 
 use nqv_core::{
-    ContourLine, ContourSpec, DirEntry, Mask, Projection, RangeEstimate, Series, SeriesSpec, Show,
-    Stats, VarInfo, VarRef, ViewSpec,
+    ContourLine, ContourSpec, DirEntry, Mask, Projection, RangeEstimate, Segment, Series,
+    SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
 };
-use nqv_session::{CatalogInfo, OpenMode};
+use nqv_session::{CatalogInfo, MapExtras, OpenMode};
 use serde::{Deserialize, Serialize};
 
 use crate::raster::EncodedRaster;
@@ -52,9 +52,9 @@ pub enum Request {
     },
     MapData {
         spec: ViewSpec,
-        contour: Option<ContourSpec>,
-        with_stats: bool,
+        extras: MapExtras,
     },
+    Coast(ViewSpec),
     ListDir(PathBuf),
     Describe(PathBuf),
     /// The text of a recipe in the server's ~/.nqv/recipes.
@@ -85,7 +85,9 @@ pub enum Response {
         range: RangeEstimate,
         contours: Vec<ContourLine>,
         stats: Option<Stats>,
+        coast: Vec<Segment>,
     },
+    Coast(Vec<Segment>),
     Dir(Vec<DirEntry>),
     Vars(Vec<VarInfo>),
     Text(Option<String>),
@@ -134,8 +136,11 @@ mod tests {
             },
             Request::MapData {
                 spec: spec.clone(),
-                contour: None,
-                with_stats: true,
+                extras: MapExtras {
+                    stats: true,
+                    coast: true,
+                    ..MapExtras::default()
+                },
             },
             Request::CellAt(spec, (10, 20)),
         ];

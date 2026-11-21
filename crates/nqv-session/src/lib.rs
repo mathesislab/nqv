@@ -11,6 +11,6 @@ pub mod recipe;
 pub mod session;
 
 pub use crate::backend::{
-    Backend, CatalogInfo, Files, GridSpec, Local, LocalFiles, MapParts, OpenMode,
+    Backend, CatalogInfo, Files, GridSpec, Local, LocalFiles, MapExtras, MapParts, OpenMode,
 };
 pub use crate::session::{Effect, MapData, Origin, Overlays, Probe, SeriesData, Session};

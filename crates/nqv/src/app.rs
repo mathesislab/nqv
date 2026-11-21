@@ -486,7 +486,13 @@ impl App {
             &CMAPS[self.s.cmap],
         );
         let (w, h) = (rgba.w, rgba.h);
-        let segments: Vec<Segment> = m.contours.into_iter().flat_map(|l| l.segments).collect();
+        // Contours and coastlines drawn alike: contrasting lines (or braille).
+        let segments: Vec<Segment> = m
+            .contours
+            .into_iter()
+            .flat_map(|l| l.segments)
+            .chain(m.coast)
+            .collect();
         let grid: Vec<Segment> = self
             .s
             .graticule((w, h))

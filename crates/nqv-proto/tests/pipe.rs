@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use nqv_core::{ContourSpec, Interp, Levels, Mask, SeriesSpec, Show, VarRef, ViewSpec};
 use nqv_proto::{Connection, Remote};
-use nqv_session::{Backend, Files, Local, OpenMode};
+use nqv_session::{Backend, Files, Local, MapExtras, OpenMode};
 
 fn small() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/small.nc")
@@ -49,10 +49,17 @@ fn remote_matches_local() {
         var: var.clone(),
         levels: Levels::Step(30.0),
     };
+    let extras = MapExtras {
+        contour: Some(contour),
+        stats: true,
+        coast: true,
+    };
     let (a, b) = (
-        local.map_data(&spec, Some(&contour), true).unwrap(),
-        rem.map_data(&spec, Some(&contour), true).unwrap(),
+        local.map_data(&spec, &extras).unwrap(),
+        rem.map_data(&spec, &extras).unwrap(),
     );
+    assert!(!a.coast.is_empty());
+    assert_eq!(a.coast, b.coast);
     // Maps agree to one 16-bit step; everything else exactly.
     let step = (a.range.max - a.range.min) / 65534.0;
     assert_eq!(a.raster.values.len(), b.raster.values.len());

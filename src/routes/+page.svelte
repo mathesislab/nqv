@@ -223,6 +223,9 @@
           </select>
         </label>
       {/if}
+      {#if view.kind === "map" && view.centre}
+        <button class:on={view.coast} onclick={() => run(`coast ${view?.coast ? "off" : "on"}`)} title="Coastlines">coast</button>
+      {/if}
       {#if view.zoomed}<button onclick={() => act(() => api.zoomReset())} title="Whole map (z)">whole map</button>{/if}
       <span class="spacer"></span>
       <button onclick={copyCommand} title="Copy the command line for this view (p)">copy command</button>

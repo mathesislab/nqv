@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use nqv_core::{
     Cond, ContourLine, ContourSpec, Graticule, Interp, Kind, Mask, Projection, RangeEstimate,
-    Raster, Region, Series, SeriesSpec, Show, Stats, Target, VarInfo, VarRef, ViewSpec, fit_size,
+    Raster, Region, Segment, Series, SeriesSpec, Show, Stats, Target, VarInfo, VarRef, ViewSpec,
+    fit_size,
 };
 use nqv_render::{CMAPS, Norm, cmap_index};
 
-use crate::backend::{Backend, CatalogInfo, GridSpec, Local, OpenMode};
+use crate::backend::{Backend, CatalogInfo, GridSpec, Local, MapExtras, OpenMode};
 use crate::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel, ZoomRange};
 use crate::{fuzzy, recipe};
 
@@ -53,6 +54,8 @@ pub struct MapData {
     pub norm: Norm,
     pub contours: Vec<ContourLine>,
     pub stats: Option<Stats>,
+    /// Coastlines in the map's pixels (where its geography is known and `coast` is on).
+    pub coast: Vec<Segment>,
 }
 
 /// A line plot: the series and its y range.
@@ -94,6 +97,8 @@ pub struct Session {
     /// Maps in this projection, this part of it (then `region` is None); None: on
     /// their own grid.
     pub target: Option<Target>,
+    /// Coastlines over maps whose geography is known.
+    pub coast: bool,
 }
 
 impl Session {
@@ -127,6 +132,7 @@ impl Session {
             probe: None,
             region: None,
             target: None,
+            coast: true,
         };
         s.reset()?;
         Ok(s)
@@ -559,6 +565,7 @@ impl Session {
             Command::Contour(c) => self.contour = c,
             Command::Zoom(z) => self.set_zoom(z)?,
             Command::Proj(p) => self.set_proj(p)?,
+            Command::Coast(on) => self.coast = on,
             Command::Recipe(name) => {
                 for c in self.recipe(&name)? {
                     self.apply(c)?;
@@ -808,9 +815,12 @@ impl Session {
             },
             proj: self.target.clone(),
         };
-        let p = self
-            .backend
-            .map_data(&spec, o.contour.as_ref(), with_stats)?;
+        let extras = MapExtras {
+            contour: o.contour,
+            stats: with_stats,
+            coast: self.coast,
+        };
+        let p = self.backend.map_data(&spec, &extras)?;
         Ok(MapData {
             norm: self.norm(p.range.min, p.range.max),
             spec,
@@ -818,6 +828,7 @@ impl Session {
             range: p.range,
             contours: p.contours,
             stats: p.stats,
+            coast: p.coast,
         })
     }
 
@@ -957,6 +968,9 @@ impl Session {
         }
         if self.interp == Interp::Bilinear {
             add("interp", "bilinear".into(), "--interp", "bilinear".into());
+        }
+        if !self.coast {
+            add("coast", "off".into(), "--coast", "off".into());
         }
         if let Some(t) = &self.target {
             add("proj", t.proj.text(), "--proj", t.proj.text());

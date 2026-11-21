@@ -124,6 +124,9 @@ struct Args {
         help_heading = "Display"
     )]
     proj: Option<String>,
+    /// Coastlines over maps whose geography is known: on (default) or off
+    #[arg(long, value_name = "on|off", help_heading = "Display")]
+    coast: Option<String>,
     /// Colour range: MIN,MAX, auto or sym (symmetric around 0)
     #[arg(
         long,
@@ -397,6 +400,9 @@ fn commands(args: &Args) -> Result<Vec<Command>, String> {
     }
     if let Some(c) = &args.contour {
         cmds.push(Command::Contour(command::parse_contour(c)?));
+    }
+    if let Some(c) = &args.coast {
+        cmds.push(Command::Coast(command::parse_on_off("--coast", c)?));
     }
     if let Some(p) = &args.proj {
         cmds.push(Command::Proj(command::parse_proj(p)?));

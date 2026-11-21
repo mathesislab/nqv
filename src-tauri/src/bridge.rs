@@ -107,6 +107,8 @@ pub struct ViewState {
     /// Longitude and latitude of the map's middle cell, where its geography is known
     /// (so it can be projected; a globe is centred there).
     pub centre: Option<(f64, f64)>,
+    /// Coastlines on (where the geography is known).
+    pub coast: bool,
     pub probe: Option<ProbeView>,
     pub command_line: String,
 }
@@ -184,6 +186,7 @@ pub fn state(s: &Session) -> ViewState {
                 .lonlat(&s.var, (v.dims[y].len / 2, v.dims[x].len / 2)),
             _ => None,
         },
+        coast: s.coast,
         probe: s.probe_info().map(|p| ProbeView {
             cell: p.cell,
             coords: p.coords,
@@ -274,6 +277,8 @@ pub struct MapHeader {
     pub contours: Vec<f32>,
     /// Meridians and parallels of a projected map, as `contours`.
     pub grid: Vec<f32>,
+    /// Coastlines, as `contours`.
+    pub coast: Vec<f32>,
     pub labels: Vec<(f32, f32, String)>,
     pub stats: Option<StatsView>,
 }
@@ -320,6 +325,11 @@ pub fn map(s: &Session, w: u32, h: u32) -> Result<(Vec<u8>, ViewSpec)> {
             .flat_map(|l| l.segments.iter().flat_map(|[a, b]| [a.0, a.1, b.0, b.1]))
             .collect(),
         labels: nqv_session::png::contour_labels(&m.contours, m.raster.w, m.raster.h),
+        coast: m
+            .coast
+            .iter()
+            .flat_map(|[a, b]| [a.0, a.1, b.0, b.1])
+            .collect(),
         grid: s
             .graticule((m.raster.w, m.raster.h))
             .map(|g| g.meridians.into_iter().chain(g.parallels))

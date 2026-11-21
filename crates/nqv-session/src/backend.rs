@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use nqv_core::{
     Catalog, ContourLine, ContourSpec, DimInfo, DirEntry, Mask, NetcdfReader, Projection,
-    RangeEstimate, Raster, Reader, Series, SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
-    cell_at, check_contour, check_mask, contours, default_bounds, list_dir, lonlat, masked, range,
-    series, series_range, stats, value, view,
+    RangeEstimate, Raster, Reader, Segment, Series, SeriesSpec, Show, Stats, VarInfo, VarRef,
+    ViewSpec, cell_at, check_contour, check_mask, coastlines, contours, default_bounds, list_dir,
+    lonlat, masked, range, series, series_range, stats, value, view,
 };
 
 /// How paths are opened (the command-line options that decide it).
@@ -138,6 +138,16 @@ pub struct MapParts {
     pub range: RangeEstimate,
     pub contours: Vec<ContourLine>,
     pub stats: Option<Stats>,
+    /// Coastlines, in the map's pixels.
+    pub coast: Vec<Segment>,
+}
+
+/// What to work out along with a map.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MapExtras {
+    pub contour: Option<ContourSpec>,
+    pub stats: bool,
+    pub coast: bool,
 }
 
 /// Browsing the file system the data is on.
@@ -192,25 +202,29 @@ pub trait Backend: Files + Send {
     fn bounds(&self, var: &VarRef, proj: &Projection) -> Result<[f64; 4]>;
     /// Longitude and latitude of a cell of map `var`, where its geography is known.
     fn lonlat(&self, var: &VarRef, cell: (usize, usize)) -> Option<(f64, f64)>;
+    /// Coastlines over the map `spec` (none where its geography is not known).
+    fn coastlines(&self, spec: &ViewSpec) -> Vec<Segment>;
 
-    /// The map in `spec` with its range, contours and (if asked) statistics; one round
-    /// trip for a remote backend. Contours or statistics that fail are left out.
-    fn map_data(
-        &self,
-        spec: &ViewSpec,
-        contour: Option<&ContourSpec>,
-        with_stats: bool,
-    ) -> Result<MapParts> {
+    /// The map in `spec` with its range and the `extras` asked for; one round trip for
+    /// a remote backend. Contours or statistics that fail are left out.
+    fn map_data(&self, spec: &ViewSpec, extras: &MapExtras) -> Result<MapParts> {
         Ok(MapParts {
             raster: self.view(spec)?,
             range: self.range(spec)?,
-            contours: contour
+            contours: extras
+                .contour
+                .as_ref()
                 .map(|c| self.contours(spec, c).unwrap_or_default())
                 .unwrap_or_default(),
-            stats: if with_stats {
+            stats: if extras.stats {
                 self.stats(spec).ok()
             } else {
                 None
+            },
+            coast: if extras.coast {
+                self.coastlines(spec)
+            } else {
+                vec![]
             },
         })
     }
@@ -333,6 +347,10 @@ impl Backend for Local {
 
     fn lonlat(&self, var: &VarRef, cell: (usize, usize)) -> Option<(f64, f64)> {
         lonlat(&self.cat, var, cell)
+    }
+
+    fn coastlines(&self, spec: &ViewSpec) -> Vec<Segment> {
+        coastlines(&self.cat, spec)
     }
 
     fn check_overlay(

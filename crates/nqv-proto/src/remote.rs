@@ -9,10 +9,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use nqv_core::{
-    ContourLine, ContourSpec, DirEntry, Mask, Projection, RangeEstimate, Raster, Series,
+    ContourLine, ContourSpec, DirEntry, Mask, Projection, RangeEstimate, Raster, Segment, Series,
     SeriesSpec, Show, Stats, VarInfo, VarRef, ViewSpec,
 };
-use nqv_session::{Backend, CatalogInfo, Files, MapParts, OpenMode};
+use nqv_session::{Backend, CatalogInfo, Files, MapExtras, MapParts, OpenMode};
 
 use crate::VERSION;
 use crate::frame;
@@ -329,24 +329,26 @@ impl Backend for Remote {
         expect!(r, Response::LonLat(p) => p).ok().flatten()
     }
 
-    fn map_data(
-        &self,
-        spec: &ViewSpec,
-        contour: Option<&ContourSpec>,
-        with_stats: bool,
-    ) -> Result<MapParts> {
+    fn coastlines(&self, spec: &ViewSpec) -> Vec<Segment> {
+        let Ok(r) = self.call(Request::Coast(spec.clone())) else {
+            return vec![];
+        };
+        expect!(r, Response::Coast(c) => c).unwrap_or_default()
+    }
+
+    fn map_data(&self, spec: &ViewSpec, extras: &MapExtras) -> Result<MapParts> {
         let req = Request::MapData {
             spec: spec.clone(),
-            contour: contour.cloned(),
-            with_stats,
+            extras: extras.clone(),
         };
-        let (raster, range, contours, stats) = expect!(self.call(req)?,
-            Response::Map { raster, range, contours, stats } => (raster, range, contours, stats))?;
+        let p = expect!(self.call(req)?,
+            Response::Map { raster, range, contours, stats, coast } => (raster, range, contours, stats, coast))?;
         Ok(MapParts {
-            raster: raster.decode()?,
-            range,
-            contours,
-            stats,
+            raster: p.0.decode()?,
+            range: p.1,
+            contours: p.2,
+            stats: p.3,
+            coast: p.4,
         })
     }
 }

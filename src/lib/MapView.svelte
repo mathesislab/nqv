@@ -105,17 +105,19 @@
       }
       ctx.stroke();
     }
-    const c = map.header.contours;
-    // White lines with a dark edge read on any colours.
-    for (const [style, width] of [["rgba(0,0,0,0.7)", 2.5], ["white", 1]] as const) {
-      ctx.strokeStyle = style;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      for (let i = 0; i < c.length; i += 4) {
-        ctx.moveTo(c[i], c[i + 1]);
-        ctx.lineTo(c[i + 2], c[i + 3]);
+    // Coastlines and contours: white lines with a dark edge read on any colours.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    for (const [segs, w] of [[map.header.coast, 0.8 * dpr], [map.header.contours, 1]] as const) {
+      for (const [style, width] of [["rgba(0,0,0,0.7)", w + 1.5], ["white", w]] as const) {
+        ctx.strokeStyle = style;
+        ctx.lineWidth = width;
+        ctx.beginPath();
+        for (let i = 0; i < segs.length; i += 4) {
+          ctx.moveTo(segs[i], segs[i + 1]);
+          ctx.lineTo(segs[i + 2], segs[i + 3]);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
     }
     ctx.font = `${11 * Math.min(window.devicePixelRatio || 1, 2)}px system-ui`;
     ctx.textAlign = "center";
