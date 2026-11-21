@@ -239,25 +239,33 @@ async fn save_png(app: State<'_, App>, path: PathBuf, w: u32, h: u32) -> Res<Str
     with(&app, |s| s.write_png(&path, (w, h)).map_err(err))
 }
 
-/// Local files named on the command line, opened at start (none: the window asks).
-fn opened_from_args() -> App {
-    // absolute, as a desktop file's %F gives them; a missing one as given, for the message
-    let paths: Vec<PathBuf> = std::env::args_os()
-        .skip(1)
-        .map(|a| std::fs::canonicalize(&a).unwrap_or_else(|_| PathBuf::from(a)))
+/// Open local files in place of the current ones (files given to the app: its
+/// arguments, as a desktop file's %F gives them, or macOS's Open With). Paths are made
+/// absolute; a missing one stays as given, for the message.
+fn open_local(app: &App, paths: Vec<PathBuf>) -> anyhow::Result<()> {
+    let paths = paths
+        .into_iter()
+        .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
         .collect();
-    let session = (!paths.is_empty())
-        .then(|| {
-            bridge::open(OpenRequest {
-                paths,
-                ..OpenRequest::default()
-            })
-        })
-        .and_then(|r| r.map_err(|e| eprintln!("nqv: {e:#}")).ok());
-    App {
-        session: Mutex::new(session),
-        last_map: Mutex::new(None),
-    }
+    let s = bridge::open(OpenRequest {
+        paths,
+        ..OpenRequest::default()
+    })?;
+    *app.session.lock().expect("session lock") = Some(s);
+    *app.last_map.lock().expect("map lock") = None;
+    Ok(())
+}
+
+/// Files opened while running: the window hears of it as `opened` (an error, or null),
+/// and is shown should it not be yet.
+#[cfg(target_os = "macos")]
+fn opened(app: &AppHandle, paths: Vec<PathBuf>) {
+    use tauri::Emitter;
+    let err = open_local(&app.state::<App>(), paths)
+        .err()
+        .map(|e| format!("{e:#}"));
+    let _ = app.emit("opened", err);
+    show(app);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -266,8 +274,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Updates::default())
-        .manage(opened_from_args())
+        .manage(App::default())
         .setup(|app| {
+            let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+            if !args.is_empty()
+                && let Err(e) = open_local(&app.state::<App>(), args)
+            {
+                eprintln!("nqv: {e:#}");
+            }
             prepare_window(app.handle());
             update::watch(app.handle());
             Ok(())
@@ -297,6 +311,14 @@ pub fn run() {
             recipes,
             save_png
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running nqv");
+        .build(tauri::generate_context!())
+        .expect("error while building nqv")
+        .run(|_app, _event| {
+            // Open With, a file dropped on the Dock icon, a double click in the Finder
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                let paths = urls.iter().filter_map(|u| u.to_file_path().ok()).collect();
+                opened(_app, paths);
+            }
+        });
 }

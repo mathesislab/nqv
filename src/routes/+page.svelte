@@ -35,6 +35,13 @@
 
   onMount(async () => {
     api.onUpdate((v) => (update = v));
+    api.onOpened(async (e) => {
+      if (e) error = e;
+      else {
+        setState(await api.state());
+        opening = false;
+      }
+    });
     colormaps = await api.colormaps();
     try {
       view = await api.state();

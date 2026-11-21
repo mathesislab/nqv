@@ -113,6 +113,8 @@ export type OpenRequest = {
 export interface Api {
   /** Show the window, once its first page is drawn. */
   ready(): Promise<void>;
+  /** Files opened from outside (the Finder): an error, or null once open. */
+  onOpened(f: (error: string | null) => void): Promise<void>;
   /** The version of an update found, and later ones as they are found. */
   onUpdate(f: (version: string | null) => void): Promise<void>;
   /** Install the update found and restart; `progress` gets the bytes so far and in all. */
@@ -155,6 +157,9 @@ export const tauriApi: Api = {
   setVar: (source, name) => invoke("set_var", { source, name }),
   vars: (query) => invoke("vars", { query }),
   ready: () => invoke("ready"),
+  onOpened: async (f) => {
+    await listen<string | null>("opened", (e) => f(e.payload));
+  },
   onUpdate: async (f) => {
     await listen<string | null>("update", (e) => f(e.payload));
     f(await invoke("update_available"));

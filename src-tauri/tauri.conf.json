@@ -38,7 +38,19 @@
     "macOS": {
       "signingIdentity": "-"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "fileAssociations": [
+      {
+        "ext": [
+          "nc",
+          "nc4"
+        ],
+        "mimeType": "application/x-netcdf",
+        "name": "NetCDF data",
+        "description": "NetCDF data",
+        "role": "Viewer"
+      }
+    ]
   },
   "mainBinaryName": "nqv-desktop",
   "plugins": {
