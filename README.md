@@ -53,6 +53,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
 | `:zoom DIM=A:B [DIM=A:B]`, `off` | `--zoom "lat=50:80 lon=@1:@200"` | part of the map: coordinate values or `@` indices per map dimension; in a projection `x=A:B y=C:D` (km) or `lon=A:B lat=C:D` |
 | `:proj SPEC`, `native` | `--proj SPEC` | maps in a projection (see below) |
+| `:coast on\|off` | `--coast off` | coastlines over maps whose geography is known (on by default) |
 | `:recipe NAME` | `-r NAME` | apply a recipe (see below); `nqv --recipes` lists them |
 | `:save NAME` | | save the current settings as a recipe |
 | `:show diff\|a\|b` | `--show diff\|a\|b` | comparison side |
@@ -100,7 +101,7 @@ In PNGs, contour levels are labelled along the lines and the colour bar has roun
 | `ortho LON,LAT` | a globe centred there |
 | `native` | the grid as stored (the default) |
 
-Where the cells lie comes from the file's CF metadata: a `grid_mapping` (polar stereographic in both variants, Lambert azimuthal equal-area, orthographic, latitude-longitude) with projected x/y in m or km, else 1D latitude and longitude. For files without it, `--grid FILE` takes it from another file with the same grid, and `--grid SPEC` gives the projection of the file's own x/y: CLIMBER-X's NH grids are `--grid "stere north"`. Each pixel goes back through the projections to its cell (nearest or `smooth`), so masks, contours, clicks (now with longitude and latitude) and series work as on the grid; statistics and colour ranges are of the cells shown. `zoom lon=-80:-10 lat=58:85` shows a box; the wheel and a drag zoom and pan in the desktop app. A global latitude-longitude grid can be shown in a polar projection too. The projections are written out in nqv (Snyder 1987) and checked against PROJ.
+Where the cells lie comes from the file's CF metadata: a `grid_mapping` (polar stereographic in both variants, Lambert azimuthal equal-area, orthographic, latitude-longitude) with projected x/y in m or km, else 1D latitude and longitude. For files without it, `--grid FILE` takes it from another file with the same grid, and `--grid SPEC` gives the projection of the file's own x/y: CLIMBER-X's NH grids are `--grid "stere north"`. Each pixel goes back through the projections to its cell (nearest or `smooth`), so masks, contours, clicks (now with longitude and latitude) and series work as on the grid; statistics and colour ranges are of the cells shown. `zoom lon=-80:-10 lat=58:85` shows a box; the wheel and a drag zoom and pan in the desktop app. A global latitude-longitude grid can be shown in a polar projection too. Wherever a map's geography is known, in a projection or on its own grid, coastlines are drawn over it (Natural Earth 1:50m, built in; `--coast off` hides them). The projections are written out in nqv (Snyder 1987) and checked against PROJ.
 
 ```bash
 nqv yelmo.nc -v uxy_s --proj "ortho -40,72" --contour "z_srf step=500" --png greenland.png

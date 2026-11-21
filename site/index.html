@@ -63,7 +63,7 @@
       </div>
     </div>
     <figure>
-      <img src="images/terminal-pixels.png" alt="The terminal viewer in an xterm with sixel graphics: ice surface velocity, masked outside the ice, with elevation contours, statistics at the side and the status line below" loading="lazy" width="1330" height="873">
+      <img src="images/terminal-pixels.png" alt="The terminal viewer in an xterm with sixel graphics: ice surface velocity, masked outside the ice, with elevation contours, statistics at the side and the status line below" loading="lazy" width="1331" height="873">
       <figcaption>The terminal viewer in xterm, with sixel graphics</figcaption>
     </figure>
   </article>
@@ -152,11 +152,12 @@
       <p>Show an ice sheet on the globe, a polar grid in longitude and latitude, or a global grid in polar
         stereographic: <code>--proj latlon</code>, <code>stere north</code>, <code>laea south</code>,
         <code>ortho -40,72</code>. nqv reads where the cells lie from the file's CF grid mapping or its
-        latitudes and longitudes, draws meridians and parallels, and gives the longitude and latitude of a
-        clicked cell. For files that lack it: <code>--grid "stere north"</code>.</p>
+        latitudes and longitudes, draws meridians, parallels and coastlines (on the map's own grid too), and
+        gives the longitude and latitude of a clicked cell. For files that lack it:
+        <code>--grid "stere north"</code>.</p>
       <p>The projections are part of nqv, checked against PROJ, so it stays one file with nothing to install.</p>
     </div>
-    <img src="images/projection.png" alt="The desktop app showing Yelmo's Greenland surface velocity on a globe, with meridians, parallels and surface elevation contours" loading="lazy" width="1280" height="860">
+    <img src="images/projection.png" alt="The desktop app showing Yelmo's Greenland surface velocity on a globe, with meridians, parallels, coastlines and surface elevation contours" loading="lazy" width="1280" height="860">
   </article>
 
   <div class="grid">
