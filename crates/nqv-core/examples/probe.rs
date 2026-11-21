@@ -38,6 +38,7 @@ fn main() -> anyhow::Result<()> {
                     size,
                     mask: Mask::default(),
                     interp: Interp::Nearest,
+                    region: None,
                 };
                 view(&cat, &spec)
                     .map(|r| format!("map {}x{} {:?}", r.w, r.h, finite_range(&r.values)))

@@ -15,6 +15,35 @@ pub struct ViewSpec {
     pub size: (u32, u32),
     pub mask: Mask,
     pub interp: Interp,
+    /// Part of the map shown (zoomed in); None for all of it.
+    pub region: Option<Region>,
+}
+
+/// A window of a map: half-open index ranges along its y and x dimensions (in the
+/// variable's index order, not screen order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Region {
+    pub y0: usize,
+    pub y1: usize,
+    pub x0: usize,
+    pub x1: usize,
+}
+
+/// The window of `spec` over a map of `ny` by `nx` cells, clamped to it and at least
+/// one cell wide: (first row, rows, first column, columns).
+fn window(spec: &ViewSpec, ny: usize, nx: usize) -> (usize, usize, usize, usize) {
+    match spec.region {
+        None => (0, ny, 0, nx),
+        Some(r) => {
+            let (y0, x0) = (
+                r.y0.min(ny.saturating_sub(1)),
+                r.x0.min(nx.saturating_sub(1)),
+            );
+            let (y1, x1) = (r.y1.clamp(y0 + 1, ny), r.x1.clamp(x0 + 1, nx));
+            (y0, y1 - y0, x0, x1 - x0)
+        }
+    }
 }
 
 /// How a map is resampled to the view size.
@@ -120,6 +149,9 @@ struct Sampling {
     /// Map dimensions of the variable.
     y: usize,
     x: usize,
+    /// First row and column of the window shown.
+    oy: usize,
+    ox: usize,
     /// Output size in pixels.
     w: usize,
     h: usize,
@@ -133,20 +165,23 @@ struct Sampling {
 }
 
 impl Sampling {
-    fn new(cat: &Catalog, r: &VarRef, var: &VarInfo, size: (u32, u32)) -> Result<Self> {
+    fn new(cat: &Catalog, spec: &ViewSpec, var: &VarInfo) -> Result<Self> {
         let Kind::Map { y, x } = var.kind() else {
             bail!("{} is not a map", var.name);
         };
-        let (ny, nx) = (var.dims[y].len, var.dims[x].len);
         for d in [&var.dims[y], &var.dims[x]] {
             ensure!(d.len > 0, "{}: dimension '{}' is empty", var.name, d.name);
         }
+        let (oy, ny, ox, nx) = window(spec, var.dims[y].len, var.dims[x].len);
+        let (r, size) = (&spec.var, spec.size);
         let (w, h) = (size.0.max(1) as usize, size.1.max(1) as usize);
         let sx = (nx / w).max(1);
         let sy = (ny / h).max(1);
         Ok(Self {
             y,
             x,
+            oy,
+            ox,
             w,
             h,
             sy,
@@ -233,15 +268,15 @@ pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
 
 fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
     let var = cat.var(&spec.var)?;
-    let s = Sampling::new(cat, &spec.var, var, spec.size)?;
+    let s = Sampling::new(cat, spec, var)?;
     let (y, x, my, mx) = (s.y, s.x, s.my, s.mx);
     check_index(var, &spec.index, &[y, x])?;
 
     let mut start = spec.index.clone();
     let mut count = vec![1; var.dims.len()];
     let mut stride = vec![1; var.dims.len()];
-    (start[y], count[y], stride[y]) = (0, my, s.sy);
-    (start[x], count[x], stride[x]) = (0, mx, s.sx);
+    (start[y], count[y], stride[y]) = (s.oy, my, s.sy);
+    (start[x], count[x], stride[x]) = (s.ox, mx, s.sx);
     let data = cat.read_as(show, &spec.var, &start, &count, &stride)?;
     ensure!(
         data.len() == my * mx,
@@ -291,6 +326,7 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
                 size: spec.size,
                 mask: Mask::default(),
                 interp: Interp::Nearest,
+                region: spec.region,
             };
             cond_values.push(view_as(cat, &mspec, mask_show(show))?.values);
         }
@@ -308,12 +344,12 @@ fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
 /// `spec.size` or the variable is not a map.
 pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize, usize)> {
     let var = cat.var(&spec.var).ok()?;
-    let s = Sampling::new(cat, &spec.var, var, spec.size).ok()?;
+    let s = Sampling::new(cat, spec, var).ok()?;
     let (c, r) = (px.0 as usize, px.1 as usize);
     if c >= s.w || r >= s.h {
         return None;
     }
-    Some((s.row(r) * s.sy, s.col(c) * s.sx))
+    Some((s.oy + s.row(r) * s.sy, s.ox + s.col(c) * s.sx))
 }
 
 /// Statistics of a map slice: finite (visible) values only.
@@ -344,7 +380,7 @@ pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
     let Kind::Map { y, x } = var.kind() else {
         bail!("{} is not a map", var.name);
     };
-    let (ny, nx) = (var.dims[y].len, var.dims[x].len);
+    let (_, ny, _, nx) = window(spec, var.dims[y].len, var.dims[x].len);
     let exact = nx * ny <= STATS_MAX;
     let size = match exact {
         true => (nx as u32, ny as u32),
@@ -494,7 +530,7 @@ fn range_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<RangeEstimate>
     let Kind::Map { y, x } = var.kind() else {
         bail!("{} is not a map", var.name);
     };
-    let (ny, nx) = (var.dims[y].len, var.dims[x].len);
+    let (_, ny, _, nx) = window(spec, var.dims[y].len, var.dims[x].len);
     let size = (nx.min(N) as u32, ny.min(N) as u32);
     let sample = view_as(
         cat,
@@ -785,6 +821,7 @@ mod tests {
             size: (4, 3),
             mask: Mask::default(),
             interp: Interp::Nearest,
+            region: None,
         };
         assert!(view(&c, &spec).unwrap().values.iter().all(|&v| v == -5.0));
         // Coordinates are not differenced: increasing y still puts y = 2 on top.
@@ -829,6 +866,7 @@ mod tests {
             size: (4, 3),
             mask: Mask { conds },
             interp: Interp::Nearest,
+            region: None,
         };
         // g = 10 y + x: hide g >= 21, i.e. row 2 from x = 1.
         let r = view(&c, &spec(vec![cond("g", Op::Ge, &[21.0])])).unwrap();
@@ -879,6 +917,7 @@ mod tests {
             size: (8, 6),
             mask: Mask { conds },
             interp,
+            region: None,
         };
         let r = view(&c, &spec(Interp::Bilinear, vec![])).unwrap();
         // Pixel (1, 0): a quarter of the way from column 0 to 1, clamped to row 0.
@@ -919,6 +958,7 @@ mod tests {
             size: (2, 2),
             mask: Mask::default(),
             interp: Interp::Nearest,
+            region: None,
         };
         // The area variable comes first: columns weighted 1 : 3, f = 10 y + x.
         let s = stats(&c, &spec).unwrap();
@@ -946,6 +986,48 @@ mod tests {
     }
 
     #[test]
+    fn region_shows_part_of_the_map() {
+        let c = cat(Mem::new(1, 6, 8, true)); // no flip: rows in index order
+        let spec = ViewSpec {
+            var: vr("f"),
+            index: vec![0, 0, 0],
+            size: (3, 2),
+            mask: Mask::default(),
+            interp: Interp::Nearest,
+            region: Some(Region {
+                y0: 2,
+                y1: 4,
+                x0: 5,
+                x1: 8,
+            }),
+        };
+        // Rows 2..4, columns 5..8 of f = 10 y + x, at full resolution.
+        assert_eq!(
+            view(&c, &spec).unwrap().values,
+            [25.0, 26.0, 27.0, 35.0, 36.0, 37.0]
+        );
+        assert_eq!(cell_at(&c, &spec, (2, 1)), Some((3, 7)));
+        let r = range(&c, &spec).unwrap();
+        assert_eq!((r.min, r.max, r.exact), (25.0, 37.0, true));
+        let mut m = Mem::new(1, 6, 8, true);
+        m.vars.retain(|v| v.name != "area");
+        let st = stats(&cat(m), &spec).unwrap();
+        assert_eq!((st.valid, st.min, st.max), (6, 25.0, 37.0));
+        // A window past the edge is clamped to the map.
+        let wide = ViewSpec {
+            region: Some(Region {
+                y0: 4,
+                y1: 99,
+                x0: 0,
+                x1: 99,
+            }),
+            size: (8, 2),
+            ..spec
+        };
+        assert_eq!(view(&c, &wide).unwrap().values[..2], [40.0, 41.0]);
+    }
+
+    #[test]
     fn slice_statistics() {
         // Without a cell-area variable, so unweighted.
         let mut m = Mem::new(2, 3, 4, true);
@@ -957,6 +1039,7 @@ mod tests {
             size: (2, 2),
             mask: Mask { conds },
             interp: Interp::Nearest,
+            region: None,
         };
         // f = 100 + 10 y + x over 3 x 4 cells, whatever the view size.
         let s = stats(&c, &spec(vec![])).unwrap();
@@ -981,6 +1064,7 @@ mod tests {
                 conds: vec![cond("y", Op::Gt, &[0.0])],
             },
             interp: Interp::Nearest,
+            region: None,
         };
         let e = view(&c, &spec).unwrap_err().to_string();
         assert!(e.contains("not on the grid"), "{e}");
@@ -994,6 +1078,7 @@ mod tests {
             size: (4, 3),
             mask: Mask::default(),
             interp: Interp::Nearest,
+            region: None,
         };
         let c = compare(Mem::new(2, 3, 4, false), Some(Mem::new(3, 3, 4, false)));
         let e = view(&c, &spec).unwrap_err().to_string();
@@ -1014,6 +1099,7 @@ mod tests {
                 size: (4, 3),
                 mask: Mask::default(),
                 interp: Interp::Nearest,
+                region: None,
             },
         )
         .unwrap();
@@ -1032,6 +1118,7 @@ mod tests {
                 size: (4, 3),
                 mask: Mask::default(),
                 interp: Interp::Nearest,
+                region: None,
             },
         )
         .unwrap();
@@ -1049,6 +1136,7 @@ mod tests {
                 size: (4, 2),
                 mask: Mask::default(),
                 interp: Interp::Nearest,
+                region: None,
             },
         )
         .unwrap();
@@ -1075,6 +1163,7 @@ mod tests {
                     size,
                     mask: Mask::default(),
                     interp: Interp::Nearest,
+                    region: None,
                 };
                 let r = view(&c, &spec).unwrap();
                 for py in 0..r.h {
@@ -1101,6 +1190,7 @@ mod tests {
             size,
             mask: Mask::default(),
             interp: Interp::Nearest,
+            region: None,
         };
         let up = cat(Mem::new(1, 3, 4, false));
         assert_eq!(cell_at(&up, &spec((4, 3)), (0, 0)), Some((2, 0))); // top is last row
@@ -1115,6 +1205,7 @@ mod tests {
             size: (4, 3),
             mask: Mask::default(),
             interp: Interp::Nearest,
+            region: None,
         };
         assert_eq!(cell_at(&down, &not_map, (0, 0)), None);
     }
@@ -1171,6 +1262,7 @@ mod tests {
                 size: (4, 3),
                 mask: Mask::default(),
                 interp: Interp::Nearest,
+                region: None,
             },
         )
         .unwrap_err();

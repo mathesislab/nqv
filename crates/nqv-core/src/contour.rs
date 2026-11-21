@@ -90,6 +90,7 @@ pub fn contours(cat: &Catalog, view_spec: &ViewSpec, c: &ContourSpec) -> Result<
         mask: view_spec.mask.clone(),
         // Bilinear, so lines over coarse grids are smooth rather than stair steps.
         interp: Interp::Bilinear,
+        region: view_spec.region,
     };
     let field = view(cat, &spec)?;
     let Some((lo, hi)) = finite_range(&field.values) else {
