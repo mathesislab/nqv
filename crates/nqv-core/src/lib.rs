@@ -8,7 +8,21 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 
 pub use crate::netcdf::NetcdfReader;
-pub use crate::view::{RangeEstimate, Raster, ViewSpec, fit_size, range, view};
+pub use crate::view::{
+    RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, finite_range, fit_size, range, series,
+    value, view,
+};
+
+/// How a variable is shown, from its dimensions of length other than 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// The last two such dimensions are (y, x).
+    Map { y: usize, x: usize },
+    /// One such dimension: a line plot along it.
+    Series { along: usize },
+    /// Every dimension has length 1.
+    Scalar,
+}
 
 /// A dimension of a variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,15 +41,39 @@ pub struct VarInfo {
 }
 
 impl VarInfo {
-    /// A variable is shown as a map when it has at least two dimensions;
-    /// the last two are (y, x).
-    pub fn is_map(&self) -> bool {
-        self.dims.len() >= 2
+    /// Dimensions of length 1 don't count, so `(time, lat=1, lon=1)` is a series.
+    /// Empty dimensions (no records yet) do count, so they are reported, not hidden.
+    pub fn kind(&self) -> Kind {
+        let free: Vec<usize> = (0..self.dims.len())
+            .filter(|&k| self.dims[k].len != 1)
+            .collect();
+        match free[..] {
+            [] => Kind::Scalar,
+            [along] => Kind::Series { along },
+            [.., y, x] => Kind::Map { y, x },
+        }
     }
 
-    /// Dimensions not displayed in a map view (all but the last two).
-    pub fn leading_dims(&self) -> &[DimInfo] {
-        &self.dims[..self.dims.len().saturating_sub(2)]
+    /// Dimensions shown by `kind()`.
+    pub fn shown_dims(&self) -> Vec<usize> {
+        match self.kind() {
+            Kind::Map { y, x } => vec![y, x],
+            Kind::Series { along } => vec![along],
+            Kind::Scalar => vec![],
+        }
+    }
+
+    /// Dimensions the user can step through: not shown, length above 1.
+    pub fn step_dims(&self) -> Vec<usize> {
+        let shown = self.shown_dims();
+        (0..self.dims.len())
+            .filter(|k| !shown.contains(k) && self.dims[*k].len > 1)
+            .collect()
+    }
+
+    /// A coordinate variable: one dimension with the variable's own name.
+    pub fn is_coordinate(&self) -> bool {
+        self.dims.len() == 1 && self.dims[0].name == self.name
     }
 }
 
@@ -77,25 +115,26 @@ impl Catalog {
         }
     }
 
-    /// Variables that can be shown as maps, coordinate variables excluded.
-    pub fn map_vars(&self) -> Vec<&VarInfo> {
+    /// Variables to offer for display: all but coordinate variables.
+    pub fn data_vars(&self) -> Vec<&VarInfo> {
         self.reader
             .variables()
             .iter()
-            .filter(|v| v.is_map())
+            .filter(|v| !v.is_coordinate())
             .collect()
+    }
+
+    /// The coordinate variable for `dim`, if the source has one.
+    pub fn coord_var(&self, dim: &DimInfo) -> Option<&VarInfo> {
+        self.reader
+            .variables()
+            .iter()
+            .find(|v| v.name == dim.name && v.is_coordinate())
     }
 
     /// Values of the coordinate variable for `dim`, if the source has one.
     pub fn coord(&self, dim: &DimInfo) -> Option<Vec<f32>> {
-        let v = self
-            .reader
-            .variables()
-            .iter()
-            .find(|v| v.name == dim.name)?;
-        if v.dims.len() != 1 || v.dims[0].name != dim.name {
-            return None;
-        }
+        self.coord_var(dim)?;
         self.reader
             .read_slice(&dim.name, &[0], &[dim.len], &[1])
             .ok()
