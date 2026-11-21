@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 use nqv_core::{Kind, Segment, Show, fit_size};
-use nqv_render::{CMAPS, colorize, draw_lines, extends};
+use nqv_render::{CMAPS, colorize, draw_faint_lines, draw_lines, extends};
 
 use crate::format::{dim_at, fmt};
 use crate::session::Session;
@@ -96,6 +96,16 @@ impl Session {
                     nqv_core::finite_range(&m.raster.values).unwrap_or((m.range.min, m.range.max));
                 let norm = s.norm(m.range.min.min(lo), m.range.max.max(hi));
                 let mut image = colorize(m.raster.w, m.raster.h, &m.raster.values, &norm, cmap);
+                let grid = s.graticule((m.raster.w, m.raster.h));
+                if let Some(g) = &grid {
+                    let lines: Vec<Segment> = g
+                        .meridians
+                        .iter()
+                        .chain(&g.parallels)
+                        .flat_map(|l| l.segments.iter().copied())
+                        .collect();
+                    draw_faint_lines(&mut image, &lines);
+                }
                 let segments: Vec<Segment> = m
                     .contours
                     .iter()
@@ -121,20 +131,42 @@ impl Session {
                         })
                         .collect::<Vec<_>>()
                 };
-                let xticks = ticks(m.raster.w, &|p| {
-                    s.cell_at(&m.spec, (p, 0)).map(|c| at(x, c.1))
-                });
-                let yticks = ticks(m.raster.h, &|p| {
-                    s.cell_at(&m.spec, (0, p)).map(|c| at(y, c.0))
-                });
+                // Projected: longitudes where meridians leave the bottom edge, latitudes
+                // where parallels leave the left one.
+                let (xticks, yticks, xlabel, ylabel) = match &grid {
+                    Some(g) => {
+                        let (w, h) = (m.raster.w as f32, m.raster.h as f32);
+                        let xs = edge_ticks(
+                            &g.meridians,
+                            |p| (p.1 - h).abs() < 1.5,
+                            |p| p.0,
+                            w,
+                            'E',
+                            'W',
+                        );
+                        let ys =
+                            edge_ticks(&g.parallels, |p| p.0.abs() < 1.5, |p| p.1, h, 'N', 'S');
+                        (xs, ys, String::new(), String::new())
+                    }
+                    None => (
+                        ticks(m.raster.w, &|p| {
+                            s.cell_at(&m.spec, (p, 0)).map(|c| at(x, c.1))
+                        }),
+                        ticks(m.raster.h, &|p| {
+                            s.cell_at(&m.spec, (0, p)).map(|c| at(y, c.0))
+                        }),
+                        label(x),
+                        label(y),
+                    ),
+                };
                 render_map(&MapPlot {
                     title,
                     subtitle,
                     image: &image,
                     xticks,
                     yticks,
-                    xlabel: label(x),
-                    ylabel: label(y),
+                    xlabel,
+                    ylabel,
                     norm,
                     cmap,
                     contours: &m.contours,
@@ -333,6 +365,44 @@ impl Canvas {
     }
 }
 
+/// Tick labels for graticule lines where they meet an edge (`at_edge` of a segment end),
+/// at `along` of that point within `0..n`: degrees with `pos` or `neg` (70°N, 40°W).
+fn edge_ticks(
+    lines: &[ContourLine],
+    at_edge: impl Fn((f32, f32)) -> bool,
+    along: impl Fn((f32, f32)) -> f32,
+    n: f32,
+    pos: char,
+    neg: char,
+) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = vec![];
+    for l in lines {
+        let hit = l
+            .segments
+            .iter()
+            .flat_map(|s| [s[0], s[1]])
+            .find(|&p| at_edge(p) && (0.0..n).contains(&along(p)));
+        if let Some(p) = hit {
+            // longitudes within -180..180; latitudes as they are
+            let v = match pos {
+                'N' => l.level,
+                _ => (l.level + 180.0).rem_euclid(360.0) - 180.0,
+            };
+            let side = match v {
+                0.0 => String::new(),
+                v if v.abs() == 180.0 => String::new(),
+                v if v < 0.0 => neg.to_string(),
+                _ => pos.to_string(),
+            };
+            out.push((
+                along(p).round() as u32,
+                format!("{}°{side}", fmt(v.abs() as f32)),
+            ));
+        }
+    }
+    out
+}
+
 fn text_width(s: &str) -> u32 {
     s.chars().count() as u32 * GLYPH
 }
@@ -363,15 +433,25 @@ pub fn render_map(p: &MapPlot) -> RgbaImage {
         c.img.put_pixel(LEFT + x, TOP + y, Px(*px));
     }
     c.frame(LEFT, TOP, w, h, BLACK);
+    // Ticks every time; a label only clear of the one before.
+    let mut right_end = i64::MIN;
     for (x, label) in &p.xticks {
         let x = (LEFT + x) as i64;
         c.rect(x as u32, TOP + h, 1, 6, BLACK);
-        c.text_centred(x, (TOP + h + 8) as i64, label, BLACK);
+        let left = x - text_width(label) as i64 / 2;
+        if left > right_end + 8 {
+            c.text_centred(x, (TOP + h + 8) as i64, label, BLACK);
+            right_end = left + text_width(label) as i64;
+        }
     }
+    let mut last_y = i64::MIN;
     for (y, label) in &p.yticks {
         let y = TOP + y;
         c.rect(LEFT - 6, y, 6, 1, BLACK);
-        c.text_right((LEFT - 10) as i64, (y - GLYPH / 2) as i64, label, BLACK);
+        if (y as i64 - last_y).abs() > (GLYPH + 4) as i64 {
+            c.text_right((LEFT - 10) as i64, (y - GLYPH / 2) as i64, label, BLACK);
+            last_y = y as i64;
+        }
     }
     c.text_right(
         (LEFT + w) as i64,
