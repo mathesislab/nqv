@@ -118,7 +118,7 @@ const KEYS: &[(&str, &str)] = &[
         "v",
         "variable picker: type to filter (fuzzy, file:var), ↑↓, Enter",
     ),
-    ("c / r", "next colour map / range auto <-> symmetric"),
+    ("c / r", "next colour map / range: auto -> symmetric -> log"),
     ("d", "comparison: A - B, A, B"),
     ("o / O", "file browser / open the folder as a collection"),
     ("[ ]", "previous / next file"),
@@ -417,6 +417,8 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         RangeMode::Auto => "",
         RangeMode::Symmetric => " sym",
         RangeMode::Fixed(..) => " fixed",
+        RangeMode::Log(None) => " log",
+        RangeMode::Log(Some(_)) => " log fixed",
     };
     s.push(Span::raw(format!("  {}{mode}  {}", CMAPS[app.cmap].name, out.name())).dim());
     Line::from(s)

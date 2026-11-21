@@ -370,7 +370,8 @@ impl App {
             KeyCode::Char('r') => {
                 self.range_mode = match self.range_mode {
                     RangeMode::Auto => RangeMode::Symmetric,
-                    RangeMode::Symmetric | RangeMode::Fixed(..) => RangeMode::Auto,
+                    RangeMode::Symmetric => RangeMode::Log(None),
+                    RangeMode::Log(_) | RangeMode::Fixed(..) => RangeMode::Auto,
                 }
             }
             KeyCode::Char(':') => self.cmdline = Some(String::new()),
@@ -712,9 +713,20 @@ impl App {
 
     fn norm(&self, min: f32, max: f32) -> Norm {
         match self.range_mode {
-            RangeMode::Auto => Norm { min, max },
+            RangeMode::Auto => Norm::linear(min, max),
             RangeMode::Symmetric => Norm::symmetric(min, max),
-            RangeMode::Fixed(min, max) => Norm { min, max },
+            RangeMode::Fixed(min, max) => Norm::linear(min, max),
+            // From the smallest positive value shown, but at most four decades.
+            RangeMode::Log(None) => Norm::log(min.max(max * 1e-4), max),
+            RangeMode::Log(Some((min, max))) => Norm::log(min, max),
+        }
+    }
+
+    /// Y range of a line plot: as for maps, but a log scale (maps only) counts as auto.
+    fn series_norm(&self, min: f32, max: f32) -> Norm {
+        match self.range_mode {
+            RangeMode::Log(_) => Norm::linear(min, max),
+            _ => self.norm(min, max),
         }
     }
 
@@ -901,6 +913,10 @@ impl App {
                 RangeMode::Auto => ("auto".into(), "auto".into()),
                 RangeMode::Symmetric => ("sym".into(), "sym".into()),
                 RangeMode::Fixed(lo, hi) => (format!("{lo} {hi}"), format!("{lo},{hi}")),
+                RangeMode::Log(None) => ("log".into(), "log".into()),
+                RangeMode::Log(Some((lo, hi))) => {
+                    (format!("log {lo} {hi}"), format!("log,{lo},{hi}"))
+                }
             };
             add("range", line, "--range", flag);
         }
@@ -1046,7 +1062,7 @@ impl App {
                 };
                 let s = series(&self.cat, &spec)?;
                 let (lo, hi) = series_range(&self.cat, &spec, &s).unwrap_or((f32::NAN, f32::NAN));
-                let norm = self.norm(lo, hi);
+                let norm = self.series_norm(lo, hi);
                 png::render_line(
                     &png::LinePlot {
                         title,
@@ -1150,7 +1166,7 @@ impl App {
             Ok(s) => {
                 let (min, max) = series_range(&self.cat, &spec, &s).unwrap_or((f32::NAN, f32::NAN));
                 let exact = s.y.len() == self.var_info().dims[along].len;
-                let norm = self.norm(min, max);
+                let norm = self.series_norm(min, max);
                 (
                     Plot::Line(s),
                     Some(RangeEstimate { min, max, exact }),

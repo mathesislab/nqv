@@ -13,21 +13,49 @@ pub struct Rgba {
 pub struct Norm {
     pub min: f32,
     pub max: f32,
+    /// Logarithmic: equal ratios get equal colour steps (needs 0 < min < max).
+    pub log: bool,
 }
 
 impl Norm {
+    pub fn linear(min: f32, max: f32) -> Self {
+        Self {
+            min,
+            max,
+            log: false,
+        }
+    }
+
     /// Range symmetric around zero that covers `min` and `max`.
     pub fn symmetric(min: f32, max: f32) -> Self {
         let a = min.abs().max(max.abs());
-        Self { min: -a, max: a }
+        Self::linear(-a, a)
     }
 
-    pub fn apply(&self, v: f32) -> f32 {
-        if self.max > self.min {
-            ((v - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
-        } else {
-            0.5
+    /// Logarithmic from `min` to `max`; linear when they are not both positive.
+    pub fn log(min: f32, max: f32) -> Self {
+        Self {
+            min,
+            max,
+            log: min > 0.0 && max > min,
         }
+    }
+
+    /// Position of `v` in the range, 0 to 1. On a log scale values at or below zero
+    /// count as the minimum.
+    pub fn apply(&self, v: f32) -> f32 {
+        if self.min.is_nan() || self.max.is_nan() || self.max <= self.min {
+            return 0.5;
+        }
+        let t = if self.log {
+            if v <= 0.0 {
+                return 0.0;
+            }
+            (v.ln() - self.min.ln()) / (self.max.ln() - self.min.ln())
+        } else {
+            (v - self.min) / (self.max - self.min)
+        };
+        t.clamp(0.0, 1.0)
     }
 }
 
@@ -151,21 +179,19 @@ mod tests {
 
     #[test]
     fn colorize_marks_missing() {
-        let n = Norm { min: 0.0, max: 1.0 };
+        let n = Norm::linear(0.0, 1.0);
         let img = colorize(2, 1, &[f32::NAN, 1.0], &n, &GRAYS);
         assert_eq!(img.data, [48, 48, 48, 255, 255, 255, 255, 255]);
     }
 
     #[test]
     fn symmetric_norm() {
-        assert_eq!(
-            Norm::symmetric(-2.0, 5.0),
-            Norm {
-                min: -5.0,
-                max: 5.0
-            }
-        );
-        assert_eq!(Norm { min: 1.0, max: 1.0 }.apply(1.0), 0.5);
+        assert_eq!(Norm::symmetric(-2.0, 5.0), Norm::linear(-5.0, 5.0));
+        assert_eq!(Norm::linear(1.0, 1.0).apply(1.0), 0.5);
+        let l = Norm::log(1.0, 100.0);
+        assert!((l.apply(10.0) - 0.5).abs() < 1e-6);
+        assert_eq!(l.apply(-3.0), 0.0);
+        assert!(!Norm::log(0.0, 10.0).log);
     }
 
     #[test]
@@ -252,13 +278,7 @@ mod line_tests {
 
     #[test]
     fn lines_contrast_with_the_background() {
-        let mut img = colorize(
-            4,
-            1,
-            &[0.0, 0.0, 1.0, 1.0],
-            &Norm { min: 0.0, max: 1.0 },
-            &GRAYS,
-        );
+        let mut img = colorize(4, 1, &[0.0, 0.0, 1.0, 1.0], &Norm::linear(0.0, 1.0), &GRAYS);
         // Two segments sharing their middle pixels: still white on black, black on white.
         draw_lines(
             &mut img,

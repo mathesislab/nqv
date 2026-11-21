@@ -22,9 +22,9 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "any dimension; map dimensions pick the clicked cell",
     ),
     (
-        "range MIN MAX | auto | sym",
+        "range MIN MAX | auto | sym | log [MIN MAX]",
         "--range MIN,MAX",
-        "colour range (y range for line plots)",
+        "colour range (y range for line plots); log: logarithmic colours",
     ),
     (
         "cmap NAME",
@@ -73,6 +73,8 @@ pub enum RangeMode {
     Symmetric,
     /// Fixed by the user.
     Fixed(f32, f32),
+    /// Logarithmic, from the data shown (down to 1e-4 of the maximum) or fixed.
+    Log(Option<(f32, f32)>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,7 +137,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym | cmap NAME | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -172,26 +174,30 @@ pub fn parse_time(arg: &str) -> Result<TimeSel, String> {
 }
 
 /// `auto`, `sym`, or two numbers separated by a space or a comma: `-2 30`, `-2,30`.
+/// `auto`, `sym`, `log`, two numbers (`-2 30`, `-2,30`), or `log` and two positive
+/// numbers (`log 1 1000`, `log,1,1000`).
 pub fn parse_range(arg: &str) -> Result<RangeMode, String> {
-    match arg {
-        "auto" => return Ok(RangeMode::Auto),
-        "sym" | "symmetric" => return Ok(RangeMode::Symmetric),
-        _ => {}
-    }
-    let nums: Vec<&str> = arg
+    let words: Vec<&str> = arg
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|s| !s.is_empty())
         .collect();
-    let bad = || format!("range: expected MIN MAX, auto or sym, got '{arg}'");
-    match nums[..] {
-        [a, b] => {
-            let (a, b): (f32, f32) = (a.parse().map_err(|_| bad())?, b.parse().map_err(|_| bad())?);
-            if a < b {
-                Ok(RangeMode::Fixed(a, b))
-            } else {
-                Err(format!("range: MIN must be below MAX, got {a} {b}"))
-            }
+    let bad = || format!("range: expected MIN MAX, auto, sym, log or log MIN MAX, got '{arg}'");
+    let pair = |a: &str, b: &str| -> Result<(f32, f32), String> {
+        let (a, b): (f32, f32) = (a.parse().map_err(|_| bad())?, b.parse().map_err(|_| bad())?);
+        match a < b {
+            true => Ok((a, b)),
+            false => Err(format!("range: MIN must be below MAX, got {a} {b}")),
         }
+    };
+    match words[..] {
+        ["auto"] => Ok(RangeMode::Auto),
+        ["sym" | "symmetric"] => Ok(RangeMode::Symmetric),
+        ["log"] => Ok(RangeMode::Log(None)),
+        ["log", a, b] => match pair(a, b)? {
+            (a, b) if a > 0.0 => Ok(RangeMode::Log(Some((a, b)))),
+            _ => Err("range: a log range needs MIN > 0".into()),
+        },
+        [a, b] => pair(a, b).map(|(a, b)| RangeMode::Fixed(a, b)),
         _ => Err(bad()),
     }
 }
@@ -456,6 +462,12 @@ mod tests {
             Ok(Command::Range(RangeMode::Fixed(-2.0, 30.0)))
         );
         assert_eq!(parse("range sym"), Ok(Command::Range(RangeMode::Symmetric)));
+        assert_eq!(parse("range log"), Ok(Command::Range(RangeMode::Log(None))));
+        assert_eq!(
+            parse_range("log,1,1000"),
+            Ok(RangeMode::Log(Some((1.0, 1000.0))))
+        );
+        assert!(parse_range("log 0 10").is_err());
         assert_eq!(parse("q"), Ok(Command::Quit));
         assert!(parse("v").is_err());
         assert!(parse("t @0").is_err());
