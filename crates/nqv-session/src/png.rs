@@ -419,7 +419,9 @@ pub fn render_map(p: &MapPlot) -> RgbaImage {
         c.rect(x as u32, bar + GLYPH, 1, 4, BLACK);
         // Centred, but kept inside the bar's width and clear of the previous label.
         let tw = text_width(&label) as i64;
-        let left = (x - tw / 2).clamp(LEFT as i64, (LEFT + w) as i64 - tw);
+        // (a label wider than the bar starts at its left end)
+        let right = ((LEFT + w) as i64 - tw).max(LEFT as i64);
+        let left = (x - tw / 2).clamp(LEFT as i64, right);
         if left > right_end + 8 {
             c.text(left, ly, &label, BLACK);
             right_end = left + tw;
