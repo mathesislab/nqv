@@ -49,7 +49,8 @@
       opening = true;
     }
     await tick();
-    if (view?.kind !== "map") requestAnimationFrame(showWindow);
+    // not requestAnimationFrame: a hidden webview does not run it
+    if (view?.kind !== "map") setTimeout(showWindow, 50);
   });
 
   function setState(s: ViewState) {
