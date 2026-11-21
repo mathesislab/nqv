@@ -109,27 +109,44 @@ impl Source {
 }
 
 impl Catalog {
-    /// One file; one folder (all NetCDF files in it); two files or two folders
-    /// (comparison, files in folders paired by name); or three or more files.
+    /// One file, or a collection of the given files and the NetCDF files in the given
+    /// folders. A single file must be readable; in a collection unreadable files are
+    /// listed in `skipped`.
     pub fn open(paths: &[PathBuf]) -> Result<Self> {
-        let dirs = paths.iter().filter(|p| p.is_dir()).count();
-        match (paths.len(), dirs) {
-            (0, _) => bail!("nothing to open"),
-            (1, 0) => Ok(Self::new(vec![Source::single(&paths[0])?], false, vec![])),
-            (1, 1) => Self::collection(&netcdf_files(&paths[0])?, &paths[0]),
-            (2, 0) => {
-                let mut a = Source::single(&paths[0])?;
-                a.other = Some(Other {
-                    path: paths[1].clone(),
-                    reader: open_reader(&paths[1])?,
-                });
-                Ok(Self::new(vec![a], true, vec![]))
+        match paths {
+            [] => bail!("nothing to open"),
+            [p] if !p.is_dir() => Ok(Self::new(vec![Source::single(p)?], false, vec![])),
+            _ => {
+                let mut files = vec![];
+                for p in paths {
+                    if p.is_dir() {
+                        files.extend(netcdf_files(p)?);
+                    } else {
+                        files.push(p.clone());
+                    }
+                }
+                let what = match paths {
+                    [p] => p.display().to_string(),
+                    _ => "the given paths".into(),
+                };
+                Self::collection(&files, &what)
             }
-            (2, 2) => Self::compare_dirs(&paths[0], &paths[1]),
-            (_, 0) => Self::collection(paths, Path::new("the arguments")),
-            _ => bail!(
-                "open one file, one folder, several files, or two files or two folders to compare"
-            ),
+        }
+    }
+
+    /// Comparison of two files, or of two folders file by file (paired by name).
+    pub fn compare(a: &Path, b: &Path) -> Result<Self> {
+        match (a.is_dir(), b.is_dir()) {
+            (false, false) => {
+                let mut s = Source::single(a)?;
+                s.other = Some(Other {
+                    path: b.to_path_buf(),
+                    reader: open_reader(b)?,
+                });
+                Ok(Self::new(vec![s], true, vec![]))
+            }
+            (true, true) => Self::compare_dirs(a, b),
+            _ => bail!("compare two files or two folders, not a file with a folder"),
         }
     }
 
@@ -142,7 +159,7 @@ impl Catalog {
         }
     }
 
-    fn collection(files: &[PathBuf], what: &Path) -> Result<Self> {
+    fn collection(files: &[PathBuf], what: &str) -> Result<Self> {
         let (mut sources, mut skipped) = (vec![], vec![]);
         for f in files {
             match Source::single(f) {
@@ -152,12 +169,8 @@ impl Catalog {
         }
         if sources.is_empty() {
             match skipped.first() {
-                Some((p, e)) => bail!(
-                    "no readable NetCDF files in {}: {}: {e}",
-                    what.display(),
-                    p.display()
-                ),
-                None => bail!("no NetCDF files in {}", what.display()),
+                Some((p, e)) => bail!("no readable NetCDF files in {what}: {}: {e}", p.display()),
+                None => bail!("no NetCDF files in {what}"),
             }
         }
         Ok(Self::new(sources, false, skipped))
@@ -167,7 +180,8 @@ impl Catalog {
         let a_files = netcdf_files(a)?;
         let b_files = netcdf_files(b)?;
         let (pairs, only_b) = pair_by_name(&a_files, &b_files);
-        let mut cat = Self::collection(&pairs.iter().map(|p| p.0.clone()).collect::<Vec<_>>(), a)?;
+        let firsts: Vec<PathBuf> = pairs.iter().map(|p| p.0.clone()).collect();
+        let mut cat = Self::collection(&firsts, &a.display().to_string())?;
         cat.compare = true;
         for s in &mut cat.sources {
             let Some((_, Some(bp))) = pairs.iter().find(|p| p.0 == s.path) else {
@@ -191,7 +205,8 @@ impl Catalog {
         Ok(cat)
     }
 
-    /// File name of a source; in a comparison "a.nc - b.nc" when the names differ.
+    /// File name of a source, with its folder when another source has the same file
+    /// name; in a comparison "a.nc - b.nc" when the names differ.
     pub fn label(&self, source: usize) -> String {
         let name = |p: &Path| {
             p.file_name()
@@ -199,11 +214,18 @@ impl Catalog {
                 .unwrap_or_default()
         };
         let s = &self.sources[source];
-        match &s.other {
-            Some(o) if name(&o.path) != name(&s.path) => {
-                format!("{} - {}", name(&s.path), name(&o.path))
-            }
+        let clash = self
+            .sources
+            .iter()
+            .enumerate()
+            .any(|(i, o)| i != source && name(&o.path) == name(&s.path));
+        let own = match s.path.parent().map(name) {
+            Some(dir) if clash && !dir.is_empty() => format!("{dir}/{}", name(&s.path)),
             _ => name(&s.path),
+        };
+        match &s.other {
+            Some(o) if name(&o.path) != name(&s.path) => format!("{own} - {}", name(&o.path)),
+            _ => own,
         }
     }
 

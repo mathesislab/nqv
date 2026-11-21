@@ -19,8 +19,10 @@ use crate::app::App;
 #[derive(Parser)]
 #[command(version, about = "Quick-look viewer for NetCDF files")]
 #[command(
-    after_help = "PATH: one file; one folder (all NetCDF files in it); two files or two \
-folders (comparison, first minus second; files in folders paired by name); or several files.\n\
+    after_help = "PATH: one file, or any number of files and folders (all NetCDF files in \
+the folders), opened together.\n\
+With --diff: two files or two folders, compared as first minus second (files in folders \
+paired by name).\n\
 A last argument that is not an existing path is taken as the variable to show first."
 )]
 struct Args {
@@ -29,6 +31,9 @@ struct Args {
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum)]
     gfx: Option<Gfx>,
+    /// Compare two files or two folders: first minus second (d cycles A-B, A, B)
+    #[arg(short, long)]
+    diff: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -78,7 +83,7 @@ fn main() -> Result<()> {
     // Open before taking over the terminal, so errors print plainly.
     let app = match paths.is_empty() {
         true => None,
-        false => Some(App::new(Catalog::open(&paths)?, var.as_deref())?),
+        false => Some(App::new(open(&paths, args.diff)?, var.as_deref())?),
     };
 
     let mut terminal = ratatui::init();
@@ -99,6 +104,14 @@ fn main() -> Result<()> {
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
     result
+}
+
+fn open(paths: &[PathBuf], diff: bool) -> Result<Catalog> {
+    match (diff, paths) {
+        (false, _) => Catalog::open(paths),
+        (true, [a, b]) => Catalog::compare(a, b),
+        (true, _) => bail!("--diff needs two files or two folders"),
+    }
 }
 
 /// Take a trailing argument that is not an existing path as a variable name.

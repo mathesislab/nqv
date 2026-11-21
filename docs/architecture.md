@@ -83,7 +83,7 @@ Variables on different grids can still be combined *for display*, because each b
 
 ### Comparisons
 
-Two files, or two folders, open as a comparison (implemented):
+`nqv --diff A B` opens two files, or two folders, as a comparison (implemented). Without `--diff`, any set of files and folders opens as one collection.
 
 - Folders are paired file by file, by name. Files only in the second folder are reported as not opened.
 - `Catalog::read` returns A, B or A − B according to `Catalog::show` (`d` cycles them), so maps, series, values and clicked cells work unchanged. Coordinate variables are never differenced.
@@ -101,7 +101,7 @@ Navigation lives in the core and the protocol, so every front end can change fil
 
 ## Launch
 
-- `nqv file.nc [var]`, `nqv run/` (collection), `nqv a.nc b.nc` or `nqv run1/ run2/` (comparison), `nqv f1 f2 f3 ...` (collection), `nqv` (browser on cwd). Stitching files along time is not implemented yet.
+- `nqv file.nc [var]`, `nqv run/` (collection), `nqv f1 f2 run2/ ...` (collection), `nqv --diff a.nc b.nc` or `nqv --diff run1/ run2/` (comparison), `nqv` (browser on cwd). Stitching files along time is not implemented yet.
 - `nqv f.nc temp -t -1 -z 100 --region arctic`: jump straight to a view. Every view can print the command line that reproduces it.
 - Opener for `.nc` in yazi/lf/ranger; target for fzf.
 - **Handoff to the laptop.** If `nqv-local` runs on the laptop and `~/.ssh/config` has `RemoteForward ~/.nqv/sock /path/to/local.sock`, then `nqv file.nc` on the HPC finds the socket and opens the view in the native or web client. The HPC process becomes the server for that view. Without the socket it draws in the terminal. Same command either way. (Works on Albedo and Levante; see Verified.)

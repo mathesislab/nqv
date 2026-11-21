@@ -7,7 +7,7 @@ Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (
 ## Use
 
 ```bash
-nqv [PATH...] [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
+nqv [--diff] [PATH...] [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 ```
 
 Without a path, `nqv` opens a file browser on the current folder.
@@ -16,9 +16,9 @@ Without a path, `nqv` opens a file browser on the current folder.
 |---|---|
 | `file.nc` | that file |
 | `run/` | all NetCDF files in the folder; the variable picker lists `file:var` |
-| `a.nc b.nc` | comparison: a − b, or a or b (`d`) |
-| `run1/ run2/` | comparison of the files with the same name in both folders |
-| `a.nc b.nc c.nc ...` | those files, as with a folder |
+| `a.nc b.nc run2/ ...` | all of them together, as with one folder |
+| `--diff a.nc b.nc` | comparison: a − b, or a or b (`d`) |
+| `--diff run1/ run2/` | comparison of the files with the same name in both folders |
 
 In a comparison, variables missing in the second file, or with different dimensions, show an error instead of a plot.
 

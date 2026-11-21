@@ -298,7 +298,8 @@ impl App {
                 self.clear = true;
             }
             KeyCode::Char('d') => {
-                self.message = Some("d: compare needs two files or two folders".into())
+                self.message =
+                    Some("d: start with --diff A B to compare two files or folders".into())
             }
             _ => {}
         }
