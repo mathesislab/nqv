@@ -76,7 +76,7 @@ Reference case, a CLIMBER-X run on Albedo (`.../climber-x/output/lgm_ice_nh_coor
 - 32 NetCDF files, mixed netCDF-4 and classic formats.
 - At least five grids: 5° lat/lon (72×36, with staggered `lonu`/`latv`), 0.125° (2880×1440), 512×256 (VILMA), 16 km polar stereographic (781×781 with `x2D`/`y2D` and `crs`), and a 171×171 `K,L` grid.
 - Record dimension named `time` or `epoch`.
-- `*_ts.nc` files are mostly scalar time series (`lat=1, lon=1`), but `ice_NH-16KM_ts.nc` holds 501 steps of 781×781 maps. View kinds must come from dimensions, never from file names.
+- `*_ts.nc` files are time series: mostly variables of `(time)` only, though some declare grid dimensions (`ice_NH-16KM_ts.nc` has `xc, yc` = 781 and one `(yc, xc)` field next to 42 `(time)` series). View kinds follow each variable's dimensions, not file names or the file's dimension list.
 - Several files have zero records (`time = UNLIMITED (0)`). They must open and say so, not fail.
 
 Variables on different grids can still be combined *for display*, because each becomes a `Raster` on the same view pixel grid. That makes cross-grid masking, differences and overlays possible when both grids have geographic coordinates. The result is a nearest-pixel approximation, which is fine for viewing.
