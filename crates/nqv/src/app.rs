@@ -10,7 +10,7 @@ use nqv_core::{
     SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours,
     fit_size, masked, netcdf_files, range, series, series_range, value, view,
 };
-use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines};
+use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines, extends};
 use ratatui::DefaultTerminal;
 use ratatui::layout::{Position, Rect, Size};
 use ratatui_image::{Resize, protocol::Protocol};
@@ -1060,6 +1060,8 @@ impl App {
                     norm,
                     cmap,
                     contours: &lines,
+                    extend: nqv_core::finite_range(&raster.values)
+                        .map_or((false, false), |(lo, hi)| extends(&norm, lo, hi)),
                 })
             }
             Kind::Series { along } => {

@@ -67,7 +67,7 @@ Masks hide values where conditions on other variables hold:
 :mask off
 ```
 
-In PNGs, contour levels are labelled along the lines and the colour bar has round ticks (powers of ten on a log scale). Contours are drawn over maps: about 10 round levels by default, or `step=500`, `n=5`, `levels=0,1000,2000`. The contoured variable must be on the same grid; contours follow the mask. Lines are black or white, whichever contrasts with the colour underneath; in half-block terminals cells crossed by a line show it as braille dots.
+In PNGs, contour levels are labelled along the lines and the colour bar has round ticks (powers of ten on a log scale). Values outside the colour range take the end colours; the colour bar then shows a triangle at that end (◀ ▶ in the terminal). Line plots are cut at a fixed y range. Contours are drawn over maps: about 10 round levels by default, or `step=500`, `n=5`, `levels=0,1000,2000`. The contoured variable must be on the same grid; contours follow the mask. Lines are black or white, whichever contrasts with the colour underneath; in half-block terminals cells crossed by a line show it as braille dots.
 
 ### Recipes
 

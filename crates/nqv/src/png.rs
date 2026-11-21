@@ -34,18 +34,68 @@ pub fn map_area(max: (u32, u32)) -> (u32, u32) {
 
 pub struct Canvas {
     pub img: RgbaImage,
+    /// When set, drawing is limited to this rectangle (x0, y0, x1, y1), ends excluded.
+    clip: Option<(i64, i64, i64, i64)>,
 }
 
 impl Canvas {
     fn new(w: u32, h: u32) -> Self {
         Self {
             img: RgbaImage::from_pixel(w, h, Px([255, 255, 255, 255])),
+            clip: None,
         }
     }
 
     fn put(&mut self, x: i64, y: i64, c: Px<u8>) {
-        if x >= 0 && y >= 0 && (x as u32) < self.img.width() && (y as u32) < self.img.height() {
+        let (x0, y0, x1, y1) =
+            self.clip
+                .unwrap_or((0, 0, self.img.width() as i64, self.img.height() as i64));
+        if x >= x0.max(0)
+            && y >= y0.max(0)
+            && x < x1.min(self.img.width() as i64)
+            && y < y1.min(self.img.height() as i64)
+        {
             self.img.put_pixel(x as u32, y as u32, c);
+        }
+    }
+
+    /// Filled triangle with corners `p`, and its outline in `edge`.
+    fn triangle(&mut self, p: [(i64, i64); 3], fill: Px<u8>, edge: Px<u8>) {
+        let (x0, x1) = (
+            p.iter().map(|q| q.0).min().unwrap(),
+            p.iter().map(|q| q.0).max().unwrap(),
+        );
+        let (y0, y1) = (
+            p.iter().map(|q| q.1).min().unwrap(),
+            p.iter().map(|q| q.1).max().unwrap(),
+        );
+        let side = |a: (i64, i64), b: (i64, i64), x: i64, y: i64| {
+            (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0)
+        };
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let d = [
+                    side(p[0], p[1], x, y),
+                    side(p[1], p[2], x, y),
+                    side(p[2], p[0], x, y),
+                ];
+                if d.iter().all(|&v| v >= 0) || d.iter().all(|&v| v <= 0) {
+                    self.put(x, y, fill);
+                }
+            }
+        }
+        for k in 0..3 {
+            self.line_thin(p[k], p[(k + 1) % 3], edge);
+        }
+    }
+
+    /// Line one pixel wide.
+    fn line_thin(&mut self, (x0, y0): (i64, i64), (x1, y1): (i64, i64), c: Px<u8>) {
+        let n = (x1 - x0).abs().max((y1 - y0).abs()).max(1);
+        for k in 0..=n {
+            let x = x0 + (x1 - x0) * k / n;
+            let y = y0 + (y1 - y0) * k / n;
+            self.put(x, y, c);
         }
     }
 
@@ -152,6 +202,8 @@ pub struct MapPlot<'a> {
     pub ylabel: String,
     pub norm: Norm,
     pub cmap: &'a Cmap,
+    /// Values fall below / above the colour range: triangles at the colour bar ends.
+    pub extend: (bool, bool),
     /// Contour lines (already drawn into `image`), for their labels.
     pub contours: &'a [ContourLine],
 }
@@ -189,6 +241,31 @@ pub fn render_map(p: &MapPlot) -> RgbaImage {
         c.rect(LEFT + x, bar, 1, GLYPH, Px([col[0], col[1], col[2], 255]));
     }
     c.frame(LEFT, bar, w, GLYPH, BLACK);
+    let col = |t: f32| {
+        let c = p.cmap.at(t);
+        Px([c[0], c[1], c[2], 255])
+    };
+    let (top, bottom, mid) = (
+        (bar - 1) as i64,
+        (bar + GLYPH) as i64,
+        (bar + GLYPH / 2) as i64,
+    );
+    if p.extend.0 {
+        let x = LEFT as i64 - 1;
+        c.triangle(
+            [(x, top), (x - GLYPH as i64, mid), (x, bottom)],
+            col(0.0),
+            BLACK,
+        );
+    }
+    if p.extend.1 {
+        let x = (LEFT + w) as i64;
+        c.triangle(
+            [(x, top), (x + GLYPH as i64, mid), (x, bottom)],
+            col(1.0),
+            BLACK,
+        );
+    }
     let ly = (bar + GLYPH + 6) as i64;
     let mut right_end = i64::MIN;
     for (t, label) in bar_ticks(&p.norm) {
@@ -236,7 +313,7 @@ pub fn bar_ticks(n: &Norm) -> Vec<(f32, String)> {
             .filter(|v| (lo..=hi).contains(v))
             .collect()
     } else {
-        nice_ticks(lo, hi, 5)
+        nice_ticks(lo, hi, 4)
     };
     let values = if values.len() < 2 {
         vec![lo, hi]
@@ -315,6 +392,8 @@ pub fn render_line(p: &LinePlot, size: (u32, u32)) -> RgbaImage {
         );
     }
     c.frame(LEFT, TOP, w, h, BLACK);
+    // Points outside a fixed y range are cut at the axes box.
+    c.clip = Some((LEFT as i64, TOP as i64, (LEFT + w) as i64, (TOP + h) as i64));
     let mut prev: Option<(i64, i64)> = None;
     for (&x, &y) in p.series.x.iter().zip(&p.series.y) {
         if !(x.is_finite() && y.is_finite()) {
@@ -328,6 +407,7 @@ pub fn render_line(p: &LinePlot, size: (u32, u32)) -> RgbaImage {
         }
         prev = Some(pt);
     }
+    c.clip = None;
     c.text_right(
         (LEFT + w) as i64,
         (TOP + h + 8 + GLYPH) as i64,
@@ -365,9 +445,36 @@ mod tests {
             .into_iter()
             .map(|t| t.1)
             .collect();
-        assert_eq!(t, ["0", "50", "100", "150", "200", "250", "300"]);
+        assert_eq!(t, ["0", "100", "200", "300"]);
+        let t: Vec<String> = bar_ticks(&Norm::linear(500.0, 2000.0))
+            .into_iter()
+            .map(|t| t.1)
+            .collect();
+        assert_eq!(t, ["500", "1000", "1500", "2000"]);
         let p = bar_ticks(&Norm::log(1.0, 100.0));
         assert!((p.iter().find(|t| t.1 == "10").unwrap().0 - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn line_plot_stays_in_its_box() {
+        let s = Series {
+            x: vec![0.0, 1.0, 2.0],
+            y: vec![0.0, 100.0, 0.0],
+        };
+        let p = LinePlot {
+            title: String::new(),
+            subtitle: String::new(),
+            series: &s,
+            y: (0.0, 10.0),
+            xlabel: String::new(),
+            ylabel: String::new(),
+        };
+        let img = render_line(&p, (400, 300));
+        // Nothing drawn in the line colour above the box.
+        let above = (0..TOP - 2)
+            .flat_map(|y| (LEFT..LEFT + 100).map(move |x| (x, y)))
+            .any(|(x, y)| *img.get_pixel(x, y) == LINE);
+        assert!(!above);
     }
 
     #[test]

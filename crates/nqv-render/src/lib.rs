@@ -59,6 +59,13 @@ impl Norm {
     }
 }
 
+/// Whether data from `lo` to `hi` fall below and above the range of `n`, so the colour
+/// bar should show that its end colours are saturated.
+pub fn extends(n: &Norm, lo: f32, hi: f32) -> (bool, bool) {
+    let tol = 1e-6 * (n.max - n.min).abs();
+    (lo < n.min - tol, hi > n.max + tol)
+}
+
 /// A colour map: colours at evenly spaced stops, interpolated linearly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cmap {
@@ -192,6 +199,14 @@ mod tests {
         assert!((l.apply(10.0) - 0.5).abs() < 1e-6);
         assert_eq!(l.apply(-3.0), 0.0);
         assert!(!Norm::log(0.0, 10.0).log);
+    }
+
+    #[test]
+    fn saturated_ends() {
+        let n = Norm::linear(0.0, 10.0);
+        assert_eq!(extends(&n, 0.0, 10.0), (false, false));
+        assert_eq!(extends(&n, -1.0, 12.0), (true, true));
+        assert_eq!(extends(&Norm::log(1.0, 100.0), 0.0, 50.0), (true, false));
     }
 
     #[test]

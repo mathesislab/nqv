@@ -2,7 +2,7 @@
 //! line, variable picker.
 
 use nqv_core::{DimInfo, Kind, Series, Show, finite_range};
-use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast};
+use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256, contrast, extends};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -84,7 +84,10 @@ pub fn draw(f: &mut Frame, app: &App, out: &Output, a: &Areas) {
         if matches!(fr.plot, Plot::Map(_))
             && let Some(n) = &fr.norm
         {
-            draw_bar(f, a.bar, n, cmap, truecolor);
+            let ext = fr
+                .range
+                .map_or((false, false), |r| extends(n, r.min, r.max));
+            draw_bar(f, a.bar, n, cmap, ext, truecolor);
         }
     }
     if let (Some(area), Some(fr), Some(along)) = (a.panel, &app.panel, app.series_dim()) {
@@ -333,12 +336,17 @@ fn draw_blocks(f: &mut Frame, img: &Rgba, braille: &[u8], r: Rect, truecolor: bo
     }
 }
 
-fn draw_bar(f: &mut Frame, area: Rect, n: &Norm, cmap: &Cmap, truecolor: bool) {
+/// Colour bar with its range; ◀ / ▶ in the end colours when values fall outside it.
+fn draw_bar(f: &mut Frame, area: Rect, n: &Norm, cmap: &Cmap, ext: (bool, bool), truecolor: bool) {
     let (lo, hi) = (fmt(n.min), fmt(n.max));
     let width = (area.width as usize)
-        .saturating_sub(lo.len() + hi.len() + 2)
+        .saturating_sub(lo.len() + hi.len() + 4)
         .min(64);
-    let mut spans = vec![Span::raw(format!("{lo} "))];
+    let end = |on: bool, glyph: &'static str, t: f32| match on {
+        true => Span::styled(glyph, Style::new().fg(color(cmap.at(t), truecolor))),
+        false => Span::raw(" "),
+    };
+    let mut spans = vec![Span::raw(format!("{lo} ")), end(ext.0, "◀", 0.0)];
     for i in 0..width {
         let t = (i as f32 + 0.5) / width as f32;
         spans.push(Span::styled(
@@ -346,6 +354,7 @@ fn draw_bar(f: &mut Frame, area: Rect, n: &Norm, cmap: &Cmap, truecolor: bool) {
             Style::new().bg(color(cmap.at(t), truecolor)),
         ));
     }
+    spans.push(end(ext.1, "▶", 1.0));
     spans.push(Span::raw(format!(" {hi}")));
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
