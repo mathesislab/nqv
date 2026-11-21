@@ -3,6 +3,8 @@
 //! length; maps travel quantised to 16 bits and LZ4-compressed.
 
 pub mod frame;
+#[cfg(unix)]
+pub mod handoff;
 pub mod message;
 pub mod raster;
 pub mod remote;
