@@ -3,10 +3,13 @@
 mod app;
 mod ui;
 
+use std::io::stdout;
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use clap::{Parser, ValueEnum};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::execute;
 use nqv_core::Catalog;
 use ratatui_image::picker::{Picker, ProtocolType};
 
@@ -71,9 +74,25 @@ fn main() -> Result<()> {
     let mut app = App::new(cat, args.var.as_deref())?;
 
     let mut terminal = ratatui::init();
-    let result = select_output(gfx).and_then(|out| app.run(&mut terminal, out));
+    release_mouse_on_panic();
+    let result = select_output(gfx).and_then(|out| {
+        // After the terminal query in select_output, so mouse reports can't mix into its reply.
+        execute!(stdout(), EnableMouseCapture)?;
+        app.run(&mut terminal, out)
+    });
+    // Harmless when capture was never enabled.
+    let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
     result
+}
+
+/// Chain a panic hook that turns mouse capture off before ratatui's hook restores the terminal.
+fn release_mouse_on_panic() {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = execute!(stdout(), DisableMouseCapture);
+        hook(info);
+    }));
 }
 
 /// Pick the output. Must run after entering the alternate screen and before reading events.

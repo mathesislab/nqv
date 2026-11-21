@@ -17,6 +17,8 @@ nqv file.nc [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 | `v` | pick a variable (type to filter, Enter, Esc) |
 | `c` | next colour map |
 | `r` | toggle range: auto / symmetric around 0 |
+| click on a map | value, cell and coordinates in the status line; series along the ← → dimension below the map |
+| `Esc` | close the clicked cell and its series; else quit |
 | `q` | quit |
 
 Graphics output is detected at start. Terminals without an image protocol (Terminal.app, GNOME Terminal, anything under tmux) get half-block characters. Set a default with `NQV_GFX`, e.g. `export NQV_GFX=blocks256` for terminals without true colour.
