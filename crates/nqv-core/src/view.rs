@@ -225,6 +225,65 @@ pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize,
     Some((s.row(r) * s.sy, s.col(c) * s.sx))
 }
 
+/// Statistics of a map slice: finite (visible) values only.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stats {
+    pub min: f32,
+    pub max: f32,
+    /// Unweighted mean and standard deviation.
+    pub mean: f64,
+    pub std: f64,
+    /// Cells with a value, and all cells looked at (the rest missing or masked).
+    pub valid: usize,
+    pub total: usize,
+    /// True when every cell of the slice was looked at, not a sample.
+    pub exact: bool,
+}
+
+/// Slices with more cells than this are sampled for statistics.
+const STATS_MAX: usize = 4_000_000;
+
+/// Statistics of the map slice in `spec` (with its mask and the comparison side shown),
+/// over every cell, or a regular sample of about 2000 x 2000 for larger slices.
+pub fn stats(cat: &Catalog, spec: &ViewSpec) -> Result<Stats> {
+    let var = cat.var(&spec.var)?;
+    let Kind::Map { y, x } = var.kind() else {
+        bail!("{} is not a map", var.name);
+    };
+    let (ny, nx) = (var.dims[y].len, var.dims[x].len);
+    let exact = nx * ny <= STATS_MAX;
+    let size = match exact {
+        true => (nx as u32, ny as u32),
+        false => fit_size(nx, ny, 2000, 2000),
+    };
+    let r = view(
+        cat,
+        &ViewSpec {
+            size,
+            ..spec.clone()
+        },
+    )?;
+    let finite: Vec<f64> = r
+        .values
+        .iter()
+        .filter(|v| v.is_finite())
+        .map(|&v| v as f64)
+        .collect();
+    let n = finite.len();
+    let mean = finite.iter().sum::<f64>() / n.max(1) as f64;
+    let var_ = finite.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n.max(1) as f64;
+    let (min, max) = finite_range(&r.values).unwrap_or((f32::NAN, f32::NAN));
+    Ok(Stats {
+        min,
+        max,
+        mean: if n > 0 { mean } else { f64::NAN },
+        std: if n > 0 { var_.sqrt() } else { f64::NAN },
+        valid: n,
+        total: r.values.len(),
+        exact,
+    })
+}
+
 /// Colour range from a sample of at most 256 x 256 points of the map slice. When a
 /// comparison shows A or B, the range covers both, so their colours compare directly.
 pub fn range(cat: &Catalog, spec: &ViewSpec) -> Result<RangeEstimate> {
@@ -606,6 +665,27 @@ mod tests {
         };
         assert!(masked(&c, &vr("f"), &[1, 2, 3], &m).unwrap());
         assert!(!masked(&c, &vr("f"), &[1, 2, 2], &m).unwrap());
+    }
+
+    #[test]
+    fn slice_statistics() {
+        let c = cat(Mem::new(2, 3, 4, true));
+        let spec = |conds| ViewSpec {
+            var: vr("f"),
+            index: vec![1, 0, 0],
+            size: (2, 2),
+            mask: Mask { conds },
+        };
+        // f = 100 + 10 y + x over 3 x 4 cells, whatever the view size.
+        let s = stats(&c, &spec(vec![])).unwrap();
+        assert_eq!(
+            (s.min, s.max, s.valid, s.total, s.exact),
+            (100.0, 123.0, 12, 12, true)
+        );
+        assert!((s.mean - 111.5).abs() < 1e-9);
+        // Masked cells do not count: hide g >= 21 (3 cells).
+        let s = stats(&c, &spec(vec![cond("g", Op::Ge, &[21.0])])).unwrap();
+        assert_eq!((s.valid, s.total, s.max), (9, 12, 120.0));
     }
 
     #[test]
