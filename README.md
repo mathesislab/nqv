@@ -38,6 +38,7 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:cvd on\|off` | `--cvd` | colour-blind mode (also `NQV_CVD=1`): `c` cycles only maps suited to colour vision deficiencies (all but jet); choosing jet anyway gives a warning |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
+| `:zoom DIM=A:B [DIM=A:B]`, `off` | `--zoom "lat=50:80 lon=@1:@200"` | part of the map: coordinate values or `@` indices per map dimension |
 | `:recipe NAME` | `-r NAME` | apply a recipe (see below); `nqv --recipes` lists them |
 | `:save NAME` | | save the current settings as a recipe |
 | `:show diff\|a\|b` | `--show diff\|a\|b` | comparison side |
