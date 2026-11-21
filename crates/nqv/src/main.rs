@@ -18,7 +18,7 @@ use crate::app::App;
 use nqv_proto::{Connection, Prompt, Remote};
 use nqv_session::command::{self, Command};
 use nqv_session::recipe;
-use nqv_session::{OpenMode, Origin, Session};
+use nqv_session::{GridSpec, OpenMode, Origin, Session};
 
 #[derive(Parser)]
 #[command(
@@ -50,9 +50,10 @@ struct Args {
     #[arg(short, long, help_heading = "Open")]
     join: bool,
     /// Geography of maps whose files lack it: a file with the grid (CF grid_mapping and
-    /// x/y, or latitude-longitude), matched by grid size
-    #[arg(long, value_name = "FILE", help_heading = "Open")]
-    grid: Option<PathBuf>,
+    /// x/y, or latitude-longitude; matched by grid size), or the projection of their own
+    /// x/y coordinates, as --proj takes it ("stere north")
+    #[arg(long, value_name = "FILE|SPEC", help_heading = "Open")]
+    grid: Option<String>,
     /// Dimension to join along, instead of the record dimension
     #[arg(long, value_name = "DIM", requires = "join", help_heading = "Open")]
     join_dim: Option<String>,
@@ -279,16 +280,22 @@ fn main() -> Result<()> {
             if !vs.is_empty() && vs_host != host {
                 bail!("--vs paths must be on the same machine as the others");
             }
-            let (grid_host, grid) = split_host(args.grid.as_slice())?;
-            if !grid.is_empty() && grid_host != host {
-                bail!("--grid must be on the same machine as the paths");
-            }
+            let grid = match args.grid.as_deref().map(GridSpec::parse) {
+                Some(GridSpec::File(f)) => {
+                    let (grid_host, mut g) = split_host(&[f])?;
+                    if grid_host != host {
+                        bail!("--grid must be on the same machine as the paths");
+                    }
+                    g.pop().map(GridSpec::File)
+                }
+                g => g,
+            };
             let mode = OpenMode {
                 diff: args.diff,
                 join: args.join,
                 join_dim: args.join_dim.clone(),
                 vs,
-                grid: grid.into_iter().next(),
+                grid,
             };
             let gui = args.gui || std::env::var("NQV_GUI").is_ok_and(|v| v == "1");
             if gui && args.png.is_none() {

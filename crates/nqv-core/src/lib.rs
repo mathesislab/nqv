@@ -14,7 +14,8 @@ mod view;
 use anyhow::Result;
 
 pub use crate::catalog::{
-    Catalog, DirEntry, Other, Show, Source, VarRef, is_data, is_netcdf, list_dir, netcdf_files,
+    Catalog, DirEntry, Grid, Other, Show, Source, VarRef, is_data, is_netcdf, list_dir,
+    netcdf_files,
 };
 pub use crate::contour::{
     ContourLine, ContourSpec, Levels, Segment, check_contour, contours, nice_ticks,

@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::geo::geo_of;
-use crate::{DimInfo, Geo, JoinedReader, Kind, NetcdfReader, Reader, VarInfo, record_dim};
+use crate::geo::{geo_as, geo_of};
+use crate::{
+    DimInfo, Geo, JoinedReader, Kind, NetcdfReader, Projection, Reader, VarInfo, record_dim,
+};
 
 /// A variable in a catalog: index of its source and its name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -51,8 +53,8 @@ pub struct Catalog {
     pub skipped: Vec<(PathBuf, String)>,
     /// Warnings worth showing, such as time steps out of order between joined files.
     pub notes: Vec<String>,
-    /// A file whose grids give the geography of maps whose own files lack it (`--grid`).
-    pub grid: Option<(PathBuf, Box<dyn Reader>)>,
+    /// Where maps whose own files lack their geography get it (`--grid`).
+    pub grid: Option<Grid>,
     pub(crate) cache: crate::reproject::Cache,
 }
 
@@ -63,6 +65,14 @@ pub fn is_data(v: &VarInfo, vars: &[VarInfo]) -> bool {
         && !vars
             .iter()
             .any(|o| o.grid_mapping.as_deref() == Some(v.name.as_str()))
+}
+
+/// The geography of maps whose files lack it (`--grid`).
+pub enum Grid {
+    /// The grids of another file, matched by size.
+    File(PathBuf, Box<dyn Reader>),
+    /// This projection, with the maps' own x/y coordinates.
+    Proj(Projection),
 }
 
 /// A directory entry for file browsing.
@@ -259,21 +269,33 @@ impl Catalog {
                 path.display()
             );
         }
-        self.grid = Some((path.to_path_buf(), Box::new(r)));
+        self.grid = Some(Grid::File(path.to_path_buf(), Box::new(r)));
         self.cache = Default::default();
         Ok(())
     }
 
-    /// Where the cells of map variable `r` lie: from its own file, else from the grid
-    /// file of a grid of the same size. None when neither says; an error when the file
-    /// names a projection nqv cannot use.
+    /// Take maps without a geography to be in `proj`, their x/y coordinates projected
+    /// ones (as `--grid "stere north"` for files naming a grid mapping they lack).
+    pub fn set_grid_proj(&mut self, proj: Projection) {
+        self.grid = Some(Grid::Proj(proj));
+        self.cache = Default::default();
+    }
+
+    /// Where the cells of map variable `r` lie: from its own file, else from `grid` (a
+    /// grid file's grid of the same size, or a projection for its own coordinates). None
+    /// when neither says; an error when the file names a projection nqv cannot use.
     pub fn geo(&self, r: &VarRef) -> Result<Option<Geo>> {
         let v = self.var(r)?;
         let reader = self.sources[r.source].reader.as_ref();
         if let Some(g) = geo_of(reader, v)? {
             return Ok(Some(g));
         }
-        let (Some((path, grid)), Kind::Map { y, x }) = (&self.grid, v.kind()) else {
+        let (path, grid) = match &self.grid {
+            None => return Ok(None),
+            Some(Grid::Proj(p)) => return Ok(geo_as(reader, v, p)),
+            Some(Grid::File(path, grid)) => (path, grid),
+        };
+        let Kind::Map { y, x } = v.kind() else {
             return Ok(None);
         };
         let size = (v.dims[y].len, v.dims[x].len);

@@ -36,7 +36,7 @@ pub fn open(req: OpenRequest) -> Result<Session> {
         join: req.join,
         join_dim: req.join_dim,
         vs: req.vs,
-        grid: req.grid,
+        grid: req.grid.map(nqv_session::GridSpec::File),
     };
     match req.host.filter(|h| !h.is_empty()) {
         None => Session::open(&req.paths, &mode),

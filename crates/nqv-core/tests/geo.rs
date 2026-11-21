@@ -208,3 +208,15 @@ fn global_grid_in_polar_stereographic() {
         assert!(s.is_nan() || (-75.0..=78.2).contains(s), "{s}");
     }
 }
+
+/// Or a projection for the file's own x/y: CLIMBER-X's NH grids are `stere north`.
+#[test]
+fn a_projection_for_the_files_own_coordinates() {
+    let mut cat = Catalog::open(&[data("nocrs.nc")]).unwrap();
+    cat.set_grid_proj(Projection::parse("stere north").unwrap());
+    let own = Catalog::open(&[data("stere.nc")]).unwrap();
+    assert_eq!(
+        cat.geo(&var("dist")).unwrap(),
+        own.geo(&var("dist")).unwrap()
+    );
+}

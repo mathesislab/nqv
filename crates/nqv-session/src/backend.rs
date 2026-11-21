@@ -22,8 +22,31 @@ pub struct OpenMode {
     pub join_dim: Option<String>,
     /// Side B of a comparison of two sets of paths.
     pub vs: Vec<PathBuf>,
-    /// A file giving the geography of maps whose files lack it (`--grid`).
-    pub grid: Option<PathBuf>,
+    /// The geography of maps whose files lack it (`--grid`).
+    pub grid: Option<GridSpec>,
+}
+
+/// Where maps whose files lack their geography get it: a file with the grid, or a
+/// projection for their own x/y coordinates.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum GridSpec {
+    File(PathBuf),
+    Proj(Projection),
+}
+
+impl GridSpec {
+    /// `--grid`'s argument: an existing file, else a projection (`Projection::parse`),
+    /// else a file (on a host, or missing: opening says so).
+    pub fn parse(arg: &str) -> Self {
+        let p = PathBuf::from(arg);
+        if p.exists() {
+            return GridSpec::File(p);
+        }
+        match Projection::parse(arg) {
+            Ok(proj) => GridSpec::Proj(proj),
+            Err(_) => GridSpec::File(p),
+        }
+    }
 }
 
 /// One source (a file, files joined, or a pair compared): its label and variables.
@@ -222,8 +245,10 @@ impl Local {
             (false, false, _) => Catalog::pair(side(paths)?, side(&mode.vs)?)?,
             (false, true, _) => side(paths)?,
         };
-        if let Some(g) = &mode.grid {
-            cat.set_grid(g)?;
+        match &mode.grid {
+            Some(GridSpec::File(g)) => cat.set_grid(g)?,
+            Some(GridSpec::Proj(p)) => cat.set_grid_proj(p.clone()),
+            None => {}
         }
         Ok(Self::new(cat))
     }

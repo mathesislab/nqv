@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use nqv_session::OpenMode;
 use nqv_session::command::Command;
+use nqv_session::{GridSpec, OpenMode};
 
 /// Show the view in the desktop app, serving its data till the window lets go. False
 /// (with the reason printed) when there is no app to show it: the terminal does.
@@ -26,7 +26,10 @@ pub fn show(paths: &[PathBuf], mode: &OpenMode, commands: Vec<Command>) -> Resul
         paths: abs(paths)?,
         mode: OpenMode {
             vs: abs(&mode.vs)?,
-            grid: abs(mode.grid.as_slice())?.pop(),
+            grid: match &mode.grid {
+                Some(GridSpec::File(f)) => abs(std::slice::from_ref(f))?.pop().map(GridSpec::File),
+                g => g.clone(),
+            },
             ..mode.clone()
         },
         commands,

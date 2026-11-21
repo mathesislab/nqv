@@ -11,7 +11,7 @@ use nqv_core::{
 };
 use nqv_render::{CMAPS, Norm, cmap_index};
 
-use crate::backend::{Backend, CatalogInfo, Local, OpenMode};
+use crate::backend::{Backend, CatalogInfo, GridSpec, Local, OpenMode};
 use crate::command::{self, Command, ContourCmd, MaskCond, RangeMode, TimeSel, ZoomRange};
 use crate::{fuzzy, recipe};
 
@@ -999,9 +999,10 @@ impl Session {
         }
         if let Some(g) = &m.grid {
             a.push("--grid".into());
-            a.push(match &self.origin.host {
-                Some(h) => format!("{h}:{}", g.display()),
-                None => g.display().to_string(),
+            a.push(match (g, &self.origin.host) {
+                (GridSpec::Proj(p), _) => p.text(),
+                (GridSpec::File(f), Some(h)) => format!("{h}:{}", f.display()),
+                (GridSpec::File(f), None) => f.display().to_string(),
             });
         }
         let at = |p: &PathBuf| match &self.origin.host {

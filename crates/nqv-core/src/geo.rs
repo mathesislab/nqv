@@ -35,17 +35,7 @@ pub(crate) fn geo_of(reader: &dyn Reader, var: &VarInfo) -> Result<Option<Geo>> 
         if !attrs.is_empty() {
             let proj =
                 Projection::from_cf(&attrs).with_context(|| format!("{}: {gm}", var.name))?;
-            if proj == Projection::LatLon {
-                return Ok(Some(Geo { proj, x: xc, y: yc }));
-            }
-            let (Some(fy), Some(fx)) = (metres(&yv), metres(&xv)) else {
-                return Ok(None);
-            };
-            return Ok(Some(Geo {
-                proj,
-                x: xc.iter().map(|v| v * fx).collect(),
-                y: yc.iter().map(|v| v * fy).collect(),
-            }));
+            return Ok(with_proj(proj, (&yv, yc), (&xv, xc)));
         }
     }
     if is_lat(&yv) && is_lon(&xv) {
@@ -56,6 +46,34 @@ pub(crate) fn geo_of(reader: &dyn Reader, var: &VarInfo) -> Result<Option<Geo>> 
         }));
     }
     Ok(None)
+}
+
+/// The map variable `var` of `reader` taken to be in `proj` (`--grid SPEC`), its own
+/// coordinates the projected x and y. None without coordinates (or units nqv knows).
+pub(crate) fn geo_as(reader: &dyn Reader, var: &VarInfo, proj: &Projection) -> Option<Geo> {
+    let Kind::Map { y, x } = var.kind() else {
+        return None;
+    };
+    let y = coord(reader, &var.dims[y].name)?;
+    let x = coord(reader, &var.dims[x].name)?;
+    with_proj(proj.clone(), (&y.0, y.1), (&x.0, x.1))
+}
+
+/// Coordinates in `proj`: degrees for latitude-longitude, else converted to metres.
+fn with_proj(proj: Projection, y: (&VarInfo, Vec<f64>), x: (&VarInfo, Vec<f64>)) -> Option<Geo> {
+    if proj == Projection::LatLon {
+        return Some(Geo {
+            proj,
+            x: x.1,
+            y: y.1,
+        });
+    }
+    let (fy, fx) = (metres(y.0)?, metres(x.0)?);
+    Some(Geo {
+        proj,
+        x: x.1.iter().map(|v| v * fx).collect(),
+        y: y.1.iter().map(|v| v * fy).collect(),
+    })
 }
 
 /// The coordinate variable of dimension `dim` and its values.
