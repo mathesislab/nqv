@@ -79,7 +79,8 @@ RUN
 }
 sixel=(-ti vt340 -xrm "XTerm*numColorRegisters: 1024" -xrm "XTerm*maxGraphicSize: 2000x2000")
 
-ice=(/data/ice.nc -v uxy_s --mask "f_ice < 0.5" --contour "z_srf step=500" --range log,1,3000)
+# CLIMBER-X's NH grid has no grid mapping in the file: --grid gives it (for coastlines)
+ice=(/data/ice.nc --grid "stere north" -v uxy_s --mask "f_ice < 0.5" --contour "z_srf step=500" --range log,1,3000)
 at=(--at xc=@300 --at yc=@330)
 desktop desktop "${ice[@]}" "${at[@]}"
 term terminal blocks -- "${ice[@]}" "${at[@]}"
