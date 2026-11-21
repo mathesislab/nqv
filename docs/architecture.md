@@ -122,7 +122,7 @@ fn range(cat: &Catalog, spec: &ViewSpec) -> RangeEstimate      // sampled now, e
 fn probe(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Probe  // value, lon/lat, cell index
 
 // nqv-render
-fn colorize(r: &Raster, norm: &Norm, cmap: &Cmap) -> Rgba
+fn colorize(w: u32, h: u32, values: &[f32], norm: &Norm, cmap: &Cmap) -> Rgba  // no core types: render has no dependencies and builds to WASM
 ```
 
 Protocol methods mirror this: `list_dir`, `open`, `close`, `tree`, `view`, `range`, `probe`, `series` (time series at a point), `cancel`. Requests are cancellable, so fast scrolling through time drops stale work. Messages are framed like LSP; Raster payloads are binary.
