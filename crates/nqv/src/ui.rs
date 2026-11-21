@@ -1,7 +1,7 @@
 //! Drawing: map or line plot, colour bar, series at a clicked cell, status line, help
 //! line, variable picker.
 
-use nqv_core::{DimInfo, Kind, Series, finite_range};
+use nqv_core::{DimInfo, Kind, Series, Show, finite_range};
 use nqv_render::{CMAPS, Cmap, Norm, Rgba, ansi256};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -109,7 +109,11 @@ fn draw_series(
         (Plot::Line(s), Some(n)) => {
             let v = app.var_info();
             let dim = &v.dims[along];
-            let xtitle = match app.cat.coord_var(dim).and_then(|c| c.units.as_deref()) {
+            let xtitle = match app
+                .cat
+                .coord_var(app.var.source, dim)
+                .and_then(|c| c.units.as_deref())
+            {
                 Some(u) => format!("{} [{u}]", dim.name),
                 None => dim.name.clone(),
             };
@@ -124,7 +128,7 @@ fn draw_series(
 /// Coordinate value of the current step along dimension `along`, or its index.
 fn step_x(app: &App, along: usize) -> f64 {
     let i = app.index[along];
-    let c = app.cat.coord(&app.var_info().dims[along]);
+    let c = app.cat.coord(app.var.source, &app.var_info().dims[along]);
     c.and_then(|c| c.get(i).copied())
         .map_or(i as f64, |c| c as f64)
 }
@@ -257,22 +261,29 @@ fn draw_bar(f: &mut Frame, area: Rect, n: &Norm, cmap: &Cmap, truecolor: bool) {
 
 fn status_line(app: &App, out: &Output) -> Line<'static> {
     let v = app.var_info();
-    let file = app
-        .cat
-        .path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let mut s = vec![
+    let file = app.cat.label(app.var.source);
+    let mut s = vec![];
+    if app.cat.compare {
+        let what = match app.cat.show {
+            Show::Diff => "A-B",
+            Show::A => "A",
+            Show::B => "B",
+        };
+        s.push(Span::raw(format!("{what} ")).reversed());
+    }
+    s.extend([
         Span::raw(format!("{file}:")).dim(),
         Span::raw(v.name.clone()).bold(),
-    ];
+    ]);
     if let Some(u) = &v.units {
         s.push(Span::raw(format!(" [{u}]")));
     }
     for k in v.step_dims() {
         let (d, i) = (&v.dims[k], app.index[k]);
-        let c = app.cat.coord(d).and_then(|c| c.get(i).copied());
+        let c = app
+            .cat
+            .coord(app.var.source, d)
+            .and_then(|c| c.get(i).copied());
         s.push(Span::raw(format!("  {}", dim_at(d, i, c))));
     }
     if let Some(fr) = &app.frame
@@ -308,6 +319,9 @@ fn dim_at(d: &DimInfo, i: usize, coord: Option<f32>) -> String {
 }
 
 fn help_line(app: &App) -> String {
+    if let Some(m) = &app.message {
+        return m.clone();
+    }
     let v = app.var_info();
     let steps = v.step_dims();
     let mut h = String::new();
@@ -325,6 +339,9 @@ fn help_line(app: &App) -> String {
         };
     }
     h += "v var  c cmap  r range  ";
+    if app.cat.compare {
+        h += "d A-B/A/B  ";
+    }
     if app.probe.is_some() {
         h += "Esc close  ";
     }
@@ -338,9 +355,10 @@ fn draw_picker(f: &mut Frame, app: &App) {
     let w = (area.width * 2 / 3).max(30).min(area.width);
     let h = (area.height * 2 / 3).max(8).min(area.height);
     let r = centered(area, w, h);
+    let several = app.cat.sources.len() > 1;
     let items: Vec<ListItem> = vars
         .iter()
-        .map(|v| {
+        .map(|(r, v)| {
             let dims: Vec<String> = v
                 .dims
                 .iter()
@@ -353,6 +371,12 @@ fn draw_picker(f: &mut Frame, app: &App) {
             };
             ListItem::new(Line::from(vec![
                 Span::raw(format!("{kind} ")).dim(),
+                Span::raw(if several {
+                    format!("{}:", app.cat.label(r.source))
+                } else {
+                    String::new()
+                })
+                .dim(),
                 Span::raw(format!("{:<20}", v.name)).bold(),
                 Span::raw(format!(" {}", v.long_name.as_deref().unwrap_or(""))),
                 Span::raw(format!("  ({})", dims.join(", "))).dim(),

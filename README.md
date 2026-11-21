@@ -7,8 +7,18 @@ Status: spike. Shows 2D slices of regular-grid variables as maps, 1D variables (
 ## Use
 
 ```bash
-nqv file.nc [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
+nqv PATH... [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 ```
+
+| PATH | Opens |
+|---|---|
+| `file.nc` | that file |
+| `run/` | all NetCDF files in the folder; the variable picker lists `file:var` |
+| `a.nc b.nc` | comparison: a − b, or a or b (`d`) |
+| `run1/ run2/` | comparison of the files with the same name in both folders |
+| `a.nc b.nc c.nc ...` | those files, as with a folder |
+
+In a comparison, variables missing in the second file, or with different dimensions, show an error instead of a plot.
 
 | Key | Action |
 |---|---|
@@ -17,6 +27,7 @@ nqv file.nc [var] [--gfx auto|kitty|sixel|iterm|blocks|blocks256]
 | `v` | pick a variable (type to filter, Enter, Esc) |
 | `c` | next colour map |
 | `r` | toggle range: auto / symmetric around 0 |
+| `d` | comparison: cycle A − B, A, B |
 | click on a map | value, cell and coordinates in the status line; series along the ← → dimension below the map |
 | `Esc` | close the clicked cell and its series; else quit |
 | `q` | quit |

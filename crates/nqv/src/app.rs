@@ -4,8 +4,8 @@ use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
-    Catalog, Kind, RangeEstimate, Series, SeriesSpec, VarInfo, ViewSpec, cell_at, finite_range,
-    fit_size, range, series, value, view,
+    Catalog, Kind, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at,
+    finite_range, fit_size, range, series, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, colorize};
 use ratatui::DefaultTerminal;
@@ -37,8 +37,11 @@ pub enum MapImage {
     Blocks(Rgba),
 }
 
+/// Everything a cached plot depends on.
+type FrameKey = (VarRef, Vec<usize>, usize, bool, Show, Rect);
+
 pub struct Frame {
-    pub key: (String, Vec<usize>, usize, bool, Rect),
+    pub key: FrameKey,
     pub plot: Plot,
     pub range: Option<RangeEstimate>,
     pub norm: Option<Norm>,
@@ -63,7 +66,7 @@ pub struct VarPicker {
 
 pub struct App {
     pub cat: Catalog,
-    pub var: String,
+    pub var: VarRef,
     /// One index per dimension of `var`; entries at shown dimensions are unused.
     pub index: Vec<usize>,
     pub cmap: usize,
@@ -74,6 +77,8 @@ pub struct App {
     pub probe: Option<Probe>,
     /// Series at the clicked cell, shown below the map.
     pub panel: Option<Frame>,
+    /// Shown instead of the help line until the next key.
+    pub message: Option<String>,
     /// Set when the screen must be cleared before the next draw (image protocols
     /// leave images behind when the plot type changes).
     clear: bool,
@@ -81,26 +86,44 @@ pub struct App {
 
 impl App {
     pub fn new(cat: Catalog, var: Option<&str>) -> Result<Self> {
+        let vars = cat.data_vars();
         let first = match var {
-            Some(v) => cat.var(v)?.name.clone(),
-            None => match default_var(&cat) {
-                Some(v) => v.name.clone(),
-                None => bail!("{}: no data variables", cat.path.display()),
+            Some(name) => match vars.iter().find(|(_, v)| v.name == name) {
+                Some((r, _)) => r.clone(),
+                None => bail!("no variable '{name}'"),
             },
+            None => match default_var(&vars) {
+                Some(r) => r.clone(),
+                None => bail!("no data variables"),
+            },
+        };
+        let message = match cat.skipped.len() {
+            0 => None,
+            n => Some(format!(
+                "{n} file(s) not opened, e.g. {}: {}",
+                cat.skipped[0].0.display(),
+                cat.skipped[0].1
+            )),
+        };
+        let (cmap, symmetric) = if cat.compare {
+            colour_defaults(cat.show)
+        } else {
+            colour_defaults(Show::A)
         };
         let mut app = Self {
             cat,
-            var: String::new(),
+            var: first.clone(),
             index: vec![],
-            cmap: 0,
-            symmetric: false,
+            cmap,
+            symmetric,
             picker: None,
             frame: None,
             probe: None,
             panel: None,
+            message,
             clear: false,
         };
-        app.set_var(&first);
+        app.set_var(first);
         Ok(app)
     }
 
@@ -131,6 +154,7 @@ impl App {
             })?;
             match next_event()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
+                    self.message = None;
                     if !self.handle_key(k.code) {
                         return Ok(());
                     }
@@ -162,7 +186,12 @@ impl App {
             return;
         };
         let dims = &self.var_info().dims;
-        let coord = |k: usize, i: usize| self.cat.coord(&dims[k]).and_then(|c| c.get(i).copied());
+        let src = self.var.source;
+        let coord = |k: usize, i: usize| {
+            self.cat
+                .coord(src, &dims[k])
+                .and_then(|c| c.get(i).copied())
+        };
         let coords = (coord(y, cell.0), coord(x, cell.1));
         let at = self.index_at(cell);
         let value = self.value_at(&at);
@@ -189,8 +218,8 @@ impl App {
             match code {
                 KeyCode::Esc => self.picker = None,
                 KeyCode::Enter => {
-                    if let Some(name) = names.get(p.sel).map(|v| v.name.clone()) {
-                        self.set_var(&name);
+                    if let Some(r) = names.get(p.sel).map(|(r, _)| r.clone()) {
+                        self.set_var(r);
                     }
                     self.picker = None;
                 }
@@ -227,6 +256,19 @@ impl App {
             }
             KeyCode::Char('c') => self.cmap = (self.cmap + 1) % CMAPS.len(),
             KeyCode::Char('r') => self.symmetric = !self.symmetric,
+            KeyCode::Char('d') if self.cat.compare => {
+                self.cat.show = match self.cat.show {
+                    Show::Diff => Show::A,
+                    Show::A => Show::B,
+                    Show::B => Show::Diff,
+                };
+                (self.cmap, self.symmetric) = colour_defaults(self.cat.show);
+                self.probe = None;
+                self.clear = true;
+            }
+            KeyCode::Char('d') => {
+                self.message = Some("d: compare needs two files or two folders".into())
+            }
             _ => {}
         }
         true
@@ -245,9 +287,9 @@ impl App {
             .clamp(0, len.saturating_sub(1) as isize) as usize;
     }
 
-    fn set_var(&mut self, name: &str) {
-        let n = self.cat.var(name).map(|v| v.dims.len()).unwrap_or(0);
-        self.var = name.to_string();
+    fn set_var(&mut self, r: VarRef) {
+        let n = self.cat.var(&r).map(|v| v.dims.len()).unwrap_or(0);
+        self.var = r;
         self.index = vec![0; n];
         self.probe = None;
         self.clear = true;
@@ -292,6 +334,7 @@ impl App {
             index.clone(),
             self.cmap,
             self.symmetric,
+            self.cat.show,
             area,
         );
         if self.panel.as_ref().is_some_and(|f| f.key == key) {
@@ -313,6 +356,7 @@ impl App {
             self.index.clone(),
             self.cmap,
             self.symmetric,
+            self.cat.show,
             area,
         );
         if self.frame.as_ref().is_some_and(|f| f.key == key) {
@@ -459,33 +503,45 @@ fn pixel_at(out: &Output, rect: Rect, col: u16, row: u16) -> Option<(u32, u32)> 
     })
 }
 
+/// Colour map index and symmetric range for what is shown: differences read best on a
+/// diverging map around zero, plain fields on viridis with their own range.
+fn colour_defaults(show: Show) -> (usize, bool) {
+    match show {
+        Show::Diff => (1, true),
+        Show::A | Show::B => (0, false),
+    }
+}
+
 /// First variable of the most common kind, maps winning ties: a time-series file
 /// opens on a series even if it also holds a few maps.
-fn default_var(cat: &Catalog) -> Option<&VarInfo> {
-    let vars = cat.data_vars();
+fn default_var<'a>(vars: &'a [(VarRef, &VarInfo)]) -> Option<&'a VarRef> {
     let rank = |k: Kind| match k {
         Kind::Map { .. } => 0,
         Kind::Series { .. } => 1,
         Kind::Scalar => 2,
     };
     let mut counts = [0usize; 3];
-    for v in &vars {
+    for (_, v) in vars {
         counts[rank(v.kind())] += 1;
     }
     let best = (0..3).max_by_key(|&r| (counts[r], 3 - r))?;
-    vars.into_iter().find(|v| rank(v.kind()) == best)
+    vars.iter()
+        .find(|(_, v)| rank(v.kind()) == best)
+        .map(|(r, _)| r)
 }
 
-/// Data variables whose name or long name contains `query` (case-insensitive).
-pub fn filtered_vars<'a>(cat: &'a Catalog, query: &str) -> Vec<&'a VarInfo> {
+/// Data variables whose file label, name or long name contains `query` (case-insensitive).
+pub fn filtered_vars<'a>(cat: &'a Catalog, query: &str) -> Vec<(VarRef, &'a VarInfo)> {
     let q = query.to_lowercase();
+    let several = cat.sources.len() > 1;
     cat.data_vars()
         .into_iter()
-        .filter(|v| {
+        .filter(|(r, v)| {
             v.name.to_lowercase().contains(&q)
                 || v.long_name
                     .as_ref()
                     .is_some_and(|l| l.to_lowercase().contains(&q))
+                || (several && cat.label(r.source).to_lowercase().contains(&q))
         })
         .collect()
 }

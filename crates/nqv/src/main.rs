@@ -17,11 +17,15 @@ use crate::app::App;
 
 #[derive(Parser)]
 #[command(version, about = "Quick-look viewer for NetCDF files")]
+#[command(
+    after_help = "PATH: one file; one folder (all NetCDF files in it); two files or two \
+folders (comparison, first minus second; files in folders paired by name); or several files.\n\
+A last argument that is not an existing path is taken as the variable to show first."
+)]
 struct Args {
-    /// NetCDF file
-    file: PathBuf,
-    /// Variable to show first
-    var: Option<String>,
+    /// Files or folders, optionally followed by a variable name
+    #[arg(required = true)]
+    paths: Vec<PathBuf>,
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum)]
     gfx: Option<Gfx>,
@@ -70,8 +74,9 @@ fn main() -> Result<()> {
         },
         _ => Gfx::Auto,
     };
-    let cat = Catalog::open(&args.file)?;
-    let mut app = App::new(cat, args.var.as_deref())?;
+    let (paths, var) = split_var(args.paths);
+    let cat = Catalog::open(&paths)?;
+    let mut app = App::new(cat, var.as_deref())?;
 
     let mut terminal = ratatui::init();
     release_mouse_on_panic();
@@ -84,6 +89,17 @@ fn main() -> Result<()> {
     let _ = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
     result
+}
+
+/// Take a trailing argument that is not an existing path as a variable name.
+fn split_var(mut paths: Vec<PathBuf>) -> (Vec<PathBuf>, Option<String>) {
+    match paths.last() {
+        Some(p) if paths.len() > 1 && !p.exists() => {
+            let var = paths.pop().map(|p| p.to_string_lossy().into_owned());
+            (paths, var)
+        }
+        _ => (paths, None),
+    }
 }
 
 /// Chain a panic hook that turns mouse capture off before ratatui's hook restores the terminal.
