@@ -76,6 +76,8 @@ pub struct Origin {
     pub diff: bool,
     pub join: bool,
     pub join_dim: Option<String>,
+    /// Side B of a comparison given with `--vs`.
+    pub vs: Vec<PathBuf>,
 }
 
 pub struct App {
@@ -778,6 +780,10 @@ impl App {
             a.extend(["--join-dim".into(), d.clone()]);
         }
         a.extend(o.paths.iter().map(|p| p.display().to_string()));
+        if !o.vs.is_empty() {
+            a.push("--vs".into());
+            a.extend(o.vs.iter().map(|p| p.display().to_string()));
+        }
         let v = self.var_info();
         let var = match self.cat.sources.len() {
             1 => v.name.clone(),

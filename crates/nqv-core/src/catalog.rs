@@ -173,18 +173,47 @@ impl Catalog {
 
     /// Comparison of two files, or of two folders file by file (paired by name).
     pub fn compare(a: &Path, b: &Path) -> Result<Self> {
-        match (a.is_dir(), b.is_dir()) {
-            (false, false) => {
-                let mut s = Source::single(a)?;
-                s.other = Some(Other {
-                    path: b.to_path_buf(),
-                    reader: open_reader(b)?,
-                });
-                Ok(Self::new(vec![s], true, vec![]))
-            }
-            (true, true) => Self::compare_dirs(a, b),
-            _ => bail!("compare two files or two folders, not a file with a folder"),
+        if a.is_dir() != b.is_dir() {
+            bail!("compare two files or two folders, not a file with a folder");
         }
+        Self::pair(
+            Self::open(&[a.to_path_buf()])?,
+            Self::open(&[b.to_path_buf()])?,
+        )
+    }
+
+    /// Comparison of two opened catalogs (collections or joined files): sources paired
+    /// by file name, or the two sources whatever their names when each side has one.
+    /// Sources only in `b` are listed in `skipped`.
+    pub fn pair(mut a: Catalog, b: Catalog) -> Result<Self> {
+        let one_each = a.sources.len() == 1 && b.sources.len() == 1;
+        let mut others: Vec<Option<Source>> = b.sources.into_iter().map(Some).collect();
+        for s in &mut a.sources {
+            let k = match one_each {
+                true => Some(0),
+                false => others.iter().position(|o| {
+                    o.as_ref()
+                        .is_some_and(|o| o.path.file_name() == s.path.file_name())
+                }),
+            };
+            if let Some(o) = k.and_then(|k| others[k].take()) {
+                s.other = Some(Other {
+                    path: o.path,
+                    reader: o.reader,
+                });
+            }
+        }
+        a.skipped.extend(b.skipped);
+        a.skipped.extend(
+            others
+                .into_iter()
+                .flatten()
+                .map(|o| (o.path, "only in the second set of files".into())),
+        );
+        a.notes.extend(b.notes);
+        a.compare = true;
+        a.show = Show::Diff;
+        Ok(a)
     }
 
     fn new(sources: Vec<Source>, compare: bool, skipped: Vec<(PathBuf, String)>) -> Self {
@@ -264,35 +293,6 @@ impl Catalog {
             }
         }
         Ok(Self::new(sources, false, skipped))
-    }
-
-    fn compare_dirs(a: &Path, b: &Path) -> Result<Self> {
-        let a_files = netcdf_files(a)?;
-        let b_files = netcdf_files(b)?;
-        let (pairs, only_b) = pair_by_name(&a_files, &b_files);
-        let firsts: Vec<PathBuf> = pairs.iter().map(|p| p.0.clone()).collect();
-        let mut cat = Self::collection(&firsts, &a.display().to_string())?;
-        cat.compare = true;
-        for s in &mut cat.sources {
-            let Some((_, Some(bp))) = pairs.iter().find(|p| p.0 == s.path) else {
-                continue;
-            };
-            match open_reader(bp) {
-                Ok(reader) => {
-                    s.other = Some(Other {
-                        path: bp.clone(),
-                        reader,
-                    })
-                }
-                Err(e) => cat.skipped.push((bp.clone(), format!("{e:#}"))),
-            }
-        }
-        cat.skipped.extend(
-            only_b
-                .into_iter()
-                .map(|p| (p, "only in the second folder".into())),
-        );
-        Ok(cat)
     }
 
     /// In a comparison showing A or B, the other one: their colour ranges are shared.
@@ -439,39 +439,51 @@ fn dims_text(dims: &[DimInfo]) -> String {
     format!("({})", d.join(", "))
 }
 
-/// Files of `a` with the file of the same name in `b`, if any, and the files only in `b`.
-fn pair_by_name(a: &[PathBuf], b: &[PathBuf]) -> (Vec<(PathBuf, Option<PathBuf>)>, Vec<PathBuf>) {
-    let pairs: Vec<_> = a
-        .iter()
-        .map(|p| {
-            (
-                p.clone(),
-                b.iter().find(|q| q.file_name() == p.file_name()).cloned(),
-            )
-        })
-        .collect();
-    let only_b = b
-        .iter()
-        .filter(|q| !a.iter().any(|p| p.file_name() == q.file_name()))
-        .cloned()
-        .collect();
-    (pairs, only_b)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Reader with the given variable names, all scalars.
+    struct Names(Vec<VarInfo>);
+
+    impl Reader for Names {
+        fn variables(&self) -> &[VarInfo] {
+            &self.0
+        }
+        fn read_slice(&self, _: &str, _: &[usize], c: &[usize], _: &[usize]) -> Result<Vec<f32>> {
+            Ok(vec![0.0; c.iter().product()])
+        }
+    }
+
+    fn side(files: &[&str]) -> Catalog {
+        let sources = files
+            .iter()
+            .map(|f| Source {
+                path: PathBuf::from(f),
+                reader: Box::new(Names(vec![])),
+                other: None,
+                joined: 1,
+            })
+            .collect();
+        Catalog::new(sources, false, vec![])
+    }
+
     #[test]
-    fn pairs_files_by_name() {
-        let p = |s: &str| PathBuf::from(s);
-        let (pairs, only_b) =
-            pair_by_name(&[p("A/x.nc"), p("A/y.nc")], &[p("B/y.nc"), p("B/z.nc")]);
-        assert_eq!(
-            pairs,
-            [(p("A/x.nc"), None), (p("A/y.nc"), Some(p("B/y.nc")))]
-        );
-        assert_eq!(only_b, [p("B/z.nc")]);
+    fn pairs_sources_by_file_name() {
+        let c = Catalog::pair(side(&["A/x.nc", "A/y.nc"]), side(&["B/y.nc", "B/z.nc"])).unwrap();
+        assert!(c.compare);
+        let others: Vec<Option<PathBuf>> = c
+            .sources
+            .iter()
+            .map(|s| s.other.as_ref().map(|o| o.path.clone()))
+            .collect();
+        assert_eq!(others, [None, Some(PathBuf::from("B/y.nc"))]);
+        assert_eq!(c.skipped.len(), 1);
+        assert_eq!(c.skipped[0].0, PathBuf::from("B/z.nc"));
+        // One source on each side: paired whatever the names.
+        let c = Catalog::pair(side(&["a.nc"]), side(&["b.nc"])).unwrap();
+        assert!(c.sources[0].other.is_some());
+        assert_eq!(c.label(0), "a.nc - b.nc");
     }
 
     #[test]

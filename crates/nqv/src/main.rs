@@ -35,6 +35,9 @@ struct Args {
     /// Compare two files or two folders: A - B (d in the viewer cycles A-B, A, B)
     #[arg(short, long, help_heading = "Open")]
     diff: bool,
+    /// Compare PATH... (side A) with these paths (side B), opened the same way (-j too)
+    #[arg(long, value_name = "PATH", num_args = 1.., help_heading = "Open")]
+    vs: Vec<PathBuf>,
     /// Join files along time; folders: same-named files across them
     #[arg(short, long, help_heading = "Open")]
     join: bool,
@@ -74,12 +77,7 @@ struct Args {
     )]
     mask: Option<String>,
     /// In a comparison, show A - B (diff), A or B
-    #[arg(
-        long,
-        value_name = "diff|a|b",
-        requires = "diff",
-        help_heading = "View"
-    )]
+    #[arg(long, value_name = "diff|a|b", help_heading = "View")]
     show: Option<String>,
 
     /// Colour range: MIN,MAX, auto or sym (symmetric around 0)
@@ -118,6 +116,8 @@ Opening:
   nqv --diff A B              A - B for two files, or for two folders file by file (same names)
   nqv -j FILE...              files joined along time, ordered by their first time value
   nqv -j FOLDER...            same-named files across the folders joined (restart segments)
+  nqv A... --vs B...          comparison of two sets of paths, each opened as without --vs;
+                              with -j both sides are joined (two segmented runs)
   nqv                         file browser
 
 Values:
@@ -132,6 +132,7 @@ Examples:
   nqv run/ice.nc -v H_ice --at zeta=@1 --at xc=0 --at yc=0 --cmap grays
   nqv --diff run1/ run2/ -v H_ice --range sym --mask 'mask_ice != 2'
   nqv -j seg1/ seg2/ seg3/ -v V_ice
+  nqv -j run1/seg* --vs run2/seg* -v V_ice
   nqv run/ice.nc -v H_ice -t 1990 --png H_ice_1990.png
 
 In the viewer, ? lists the keys and : commands (the same as these options),
@@ -190,6 +191,7 @@ fn main() -> Result<()> {
                 diff: args.diff,
                 join: args.join,
                 join_dim: args.join_dim.clone(),
+                vs: args.vs.clone(),
             };
             for c in commands(&args).map_err(anyhow::Error::msg)? {
                 app.apply(c).map_err(anyhow::Error::msg)?;
@@ -264,15 +266,20 @@ fn parse_size(s: &str) -> Result<(u32, u32)> {
 }
 
 fn open(paths: &[PathBuf], args: &Args) -> Result<Catalog> {
-    if let Some(p) = paths.iter().find(|p| !p.exists()) {
+    if let Some(p) = paths.iter().chain(&args.vs).find(|p| !p.exists()) {
         bail!("{}: no such file or folder", p.display());
     }
-    match (args.diff, args.join, paths) {
-        (true, true, _) => bail!("--diff with --join is not supported yet"),
-        (true, false, [a, b]) => Catalog::compare(a, b),
-        (true, false, _) => bail!("--diff needs two files or two folders"),
-        (false, true, _) => Catalog::join(paths, args.join_dim.as_deref()),
-        (false, false, _) => Catalog::open(paths),
+    let side = |p: &[PathBuf]| match args.join {
+        true => Catalog::join(p, args.join_dim.as_deref()),
+        false => Catalog::open(p),
+    };
+    match (args.diff, args.vs.is_empty(), paths) {
+        (true, false, _) => bail!("use --diff A B or A... --vs B..., not both"),
+        (true, true, _) if args.join => bail!("to compare joined files use -j A... --vs B..."),
+        (true, true, [a, b]) => Catalog::compare(a, b),
+        (true, true, _) => bail!("--diff needs two files or two folders"),
+        (false, false, _) => Catalog::pair(side(paths)?, side(&args.vs)?),
+        (false, true, _) => side(paths),
     }
 }
 
