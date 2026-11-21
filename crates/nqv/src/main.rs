@@ -41,6 +41,9 @@ struct Args {
     /// Colour range: MIN,MAX (or "MIN MAX"), auto or sym
     #[arg(long, allow_hyphen_values = true)]
     range: Option<String>,
+    /// Hide values where conditions hold: "mask_ice != 2", "basins = 1,3", "H_ice < 10 and z_bed > 0"
+    #[arg(long, allow_hyphen_values = true)]
+    mask: Option<String>,
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum)]
     gfx: Option<Gfx>,
@@ -105,9 +108,11 @@ fn main() -> Result<()> {
             let mut app = App::new(open(&args.paths, &args)?, args.var.as_deref())?;
             let time = args.time.as_deref().map(command::parse_time).transpose();
             let range = args.range.as_deref().map(command::parse_range).transpose();
+            let mask = args.mask.as_deref().map(command::parse_mask).transpose();
             let cmds = [
                 time.map_err(anyhow::Error::msg)?.map(Command::Time),
                 range.map_err(anyhow::Error::msg)?.map(Command::Range),
+                mask.map_err(anyhow::Error::msg)?.map(Command::Mask),
             ];
             for c in cmds.into_iter().flatten() {
                 app.apply(c).map_err(anyhow::Error::msg)?;

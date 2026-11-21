@@ -6,8 +6,8 @@ use anyhow::{Result, bail};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
-    Catalog, Kind, Mask, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec,
-    cell_at, fit_size, netcdf_files, range, series, series_range, value, view,
+    Catalog, Cond, Kind, Mask, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec,
+    cell_at, check_mask, fit_size, masked, netcdf_files, range, series, series_range, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, colorize};
 use ratatui::DefaultTerminal;
@@ -16,7 +16,7 @@ use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
 use crate::browser::{Action, Browser};
-use crate::command::{self, Command, RangeMode};
+use crate::command::{self, Command, MaskCond, RangeMode};
 use crate::fuzzy;
 use crate::ui;
 
@@ -43,7 +43,7 @@ pub enum MapImage {
 }
 
 /// Everything a cached plot depends on.
-type FrameKey = (VarRef, Vec<usize>, usize, RangeMode, Show, Rect);
+type FrameKey = (VarRef, Vec<usize>, usize, RangeMode, Show, Mask, Rect);
 
 pub struct Frame {
     pub key: FrameKey,
@@ -76,6 +76,11 @@ pub struct App {
     pub index: Vec<usize>,
     pub cmap: usize,
     pub range_mode: RangeMode,
+    /// Mask conditions as typed (`:mask`), resolved to `active_mask` for each draw.
+    pub mask: Vec<MaskCond>,
+    /// The mask applied to the current variable; empty when `mask_error` says why not.
+    pub active_mask: Mask,
+    pub mask_error: Option<String>,
     pub picker: Option<VarPicker>,
     /// Text typed after `:`, while the command line is open.
     pub cmdline: Option<String>,
@@ -128,6 +133,9 @@ impl App {
             range_mode,
             picker: None,
             cmdline: None,
+            mask: vec![],
+            active_mask: Mask::default(),
+            mask_error: None,
             frame: None,
             probe: None,
             panel: None,
@@ -383,6 +391,7 @@ impl App {
         if !self.cat.compare && !new.cat.compare {
             (new.cmap, new.range_mode) = (self.cmap, self.range_mode);
         }
+        new.mask = self.mask.clone();
         new.clear = true;
         *self = new;
         Ok(())
@@ -490,7 +499,59 @@ impl App {
     }
 
     fn value_at(&self, index: &[usize]) -> Result<f32, String> {
+        let hidden = masked(&self.cat, &self.var, index, &self.active_mask);
+        if hidden.map_err(|e| format!("{e:#}"))? {
+            return Err("masked".into());
+        }
         value(&self.cat, &self.var, index).map_err(|e| format!("{e:#}"))
+    }
+
+    /// Resolve the typed mask for the current variable: names in the current file
+    /// first, then anywhere in the collection; `file:var` names the file.
+    fn update_mask(&mut self) {
+        let resolved = self
+            .mask
+            .iter()
+            .map(|c| {
+                Ok(Cond {
+                    var: self.resolve(&c.var)?,
+                    op: c.op,
+                    values: c.values.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(|conds| Mask { conds })
+            .and_then(|m| {
+                check_mask(&self.cat, &self.var, &m)
+                    .map(|_| m)
+                    .map_err(|e| format!("{e:#}"))
+            });
+        match resolved {
+            Ok(m) => (self.active_mask, self.mask_error) = (m, None),
+            Err(e) => (self.active_mask, self.mask_error) = (Mask::default(), Some(e)),
+        }
+    }
+
+    /// Variable named exactly `name` (or `file:name`), preferring the current file.
+    fn resolve(&self, name: &str) -> Result<VarRef, String> {
+        let vars = self.cat.data_vars();
+        let found = match name.split_once(':') {
+            Some((file, var)) => vars.iter().find(|(r, v)| {
+                v.name == var
+                    && (self.cat.label(r.source) == file
+                        || self.cat.sources[r.source]
+                            .path
+                            .file_name()
+                            .is_some_and(|f| f == file))
+            }),
+            None => vars
+                .iter()
+                .find(|(r, v)| v.name == name && r.source == self.var.source)
+                .or_else(|| vars.iter().find(|(_, v)| v.name == name)),
+        };
+        found
+            .map(|(r, _)| r.clone())
+            .ok_or_else(|| format!("mask: no variable '{name}'"))
     }
 
     /// Re-read the value at the clicked cell when the indices changed, and recompute
@@ -520,6 +581,7 @@ impl App {
             self.cmap,
             self.range_mode,
             self.cat.show,
+            self.active_mask.clone(),
             area,
         );
         if self.panel.as_ref().is_some_and(|f| f.key == key) {
@@ -536,12 +598,14 @@ impl App {
 
     /// Recompute the plot when the state or the area changed.
     fn update_frame(&mut self, out: &Output, area: Rect) {
+        self.update_mask();
         let key = (
             self.var.clone(),
             self.index.clone(),
             self.cmap,
             self.range_mode,
             self.cat.show,
+            self.active_mask.clone(),
             area,
         );
         if self.frame.as_ref().is_some_and(|f| f.key == key) {
@@ -550,9 +614,9 @@ impl App {
         let (plot, range, norm) = match self.var_info().kind() {
             Kind::Map { y, x } => self.map(out, area, y, x),
             Kind::Series { along } => self.line(area, along, self.index.clone()),
-            Kind::Scalar => match value(&self.cat, &self.var, &self.index) {
+            Kind::Scalar => match self.value_at(&self.index) {
                 Ok(v) => (Plot::Scalar(v), None, None),
-                Err(e) => (Plot::Error(format!("{e:#}")), None, None),
+                Err(e) => (Plot::Error(e), None, None),
             },
         };
         self.frame = Some(Frame {
@@ -594,6 +658,13 @@ impl App {
                 self.index[d] = i;
             }
             Command::Range(m) => self.range_mode = m,
+            Command::Mask(m) => {
+                self.mask = m.unwrap_or_default();
+                // Re-read the clicked value under the new mask.
+                if let Some(p) = &mut self.probe {
+                    p.at.clear();
+                }
+            }
         }
         Ok(false)
     }
@@ -621,7 +692,7 @@ impl App {
             var: self.var.clone(),
             index: self.index.clone(),
             size: fit_size(nx, ny, max_w, max_h),
-            mask: Mask::default(),
+            mask: self.active_mask.clone(),
         };
         match view(&self.cat, &spec).and_then(|r| Ok((r, range(&self.cat, &spec)?))) {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),
@@ -663,7 +734,7 @@ impl App {
             along,
             index,
             max_points: 2 * area.width as usize,
-            mask: Mask::default(),
+            mask: self.active_mask.clone(),
         };
         match series(&self.cat, &spec) {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),

@@ -297,11 +297,11 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         && let Some(r) = &fr.range
     {
         let approx = if r.exact { "" } else { "~" };
-        s.push(Span::raw(format!(
-            "  {approx}[{}, {}]",
-            fmt(r.min),
-            fmt(r.max)
-        )));
+        s.push(Span::raw(if r.min.is_finite() {
+            format!("  {approx}[{}, {}]", fmt(r.min), fmt(r.max))
+        } else {
+            "  no visible values".into()
+        }));
     }
     if let Some(p) = &app.probe
         && let Kind::Map { y, x } = v.kind()
@@ -312,6 +312,14 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         s.push(match &p.value {
             Ok(x) => Span::raw(fmt(*x)).bold(),
             Err(e) => Span::raw(e.clone()).red(),
+        });
+    }
+    if !app.mask.is_empty() {
+        let text: Vec<String> = app.mask.iter().map(|c| c.text()).collect();
+        let text = format!("  mask: {}", text.join(" and "));
+        s.push(match &app.mask_error {
+            None => Span::raw(text).italic(),
+            Some(e) => Span::raw(format!("{text} (not applied: {e})")).red(),
         });
     }
     let mode = match app.range_mode {

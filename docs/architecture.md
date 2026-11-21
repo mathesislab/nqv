@@ -138,7 +138,7 @@ Protocol methods mirror this: `list_dir`, `open`, `close`, `tree`, `view`, `rang
 
 ## Commands
 
-Single keys for frequent actions; `:` opens a command line for actions with an argument. Commands share their names and syntax with the command-line flags, so a view can be reached either way: `v NAME` / `-v`, `t VALUE` or `t @INDEX` / `-t`, `range MIN MAX|auto|sym` / `--range`, `q`. Planned next: `mask` (issue #1), `diff PATH`. No modal (vi-style) editing.
+Single keys for frequent actions; `:` opens a command line for actions with an argument. Commands share their names and syntax with the command-line flags, so a view can be reached either way: `v NAME` / `-v`, `t VALUE` or `t @INDEX` / `-t`, `range MIN MAX|auto|sym` / `--range`, `q`. `mask VAR OP VALUES [and ...]` / `--mask` hides values where all conditions hold (`= != < <= > >=`, comma lists for `=` and `!=`); the core applies a `Mask` carried in `ViewSpec`/`SeriesSpec`, so maps, series, ranges and clicked values agree. Masks on other grids (via the Raster) come later. Planned next: `diff PATH`. No modal (vi-style) editing.
 
 ## Big files
 
@@ -162,7 +162,6 @@ ice:H_ice  t=124/501  [0, 3500] viridis
 
 ## Wish list (not in v1)
 
-- **Masking by variable.** `mask = X` hides cells where a chosen mask variable equals X; `mask != X` hides cells where it doesn't. Example: `ice:mask_ice != 2` to show only dynamic ice. Needs rules for the mask's own free dimensions (same time index when the time axes match, else a fixed index) and for masks on another grid (via the Raster, see above). Later perhaps simple expressions. To be filed as a GitHub issue.
 - Overlays: contours of one variable on another, possibly from another grid.
 - Mesh-on-GPU wire format (design 3) for zooming into very large unstructured meshes.
 - Zarr and plain HDF5 sources.

@@ -1,5 +1,7 @@
-//! Commands typed after `:` in the viewer. The command-line flags `-v`, `-t` and
-//! `--range` are parsed by the same functions, so both share one vocabulary.
+//! Commands typed after `:` in the viewer. The command-line flags `-v`, `-t`,
+//! `--range` and `--mask` are parsed by the same functions, so both share one vocabulary.
+
+use nqv_core::Op;
 
 /// Position along the first steppable dimension (usually time).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -27,10 +29,27 @@ pub enum Command {
     Var(String),
     Time(TimeSel),
     Range(RangeMode),
+    /// Mask conditions (all must hold to hide a value); None removes the mask.
+    Mask(Option<Vec<MaskCond>>),
     Quit,
 }
 
-pub const HELP: &str = "v NAME | t VALUE | t @INDEX | range MIN MAX | range auto | range sym | q";
+/// A mask condition as typed: the variable is resolved by the viewer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaskCond {
+    pub var: String,
+    pub op: Op,
+    pub values: Vec<f32>,
+}
+
+impl MaskCond {
+    pub fn text(&self) -> String {
+        let v: Vec<String> = self.values.iter().map(|v| v.to_string()).collect();
+        format!("{} {} {}", self.var, self.op.symbol(), v.join(","))
+    }
+}
+
+pub const HELP: &str = "v NAME | t VALUE | t @INDEX | range MIN MAX|auto|sym | mask VAR OP VALUES [and ...] | mask off | q";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -41,6 +60,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "v" | "var" if !arg.is_empty() => Ok(Command::Var(arg.to_string())),
         "t" | "time" => parse_time(arg).map(Command::Time),
         "range" => parse_range(arg).map(Command::Range),
+        "mask" => parse_mask(arg).map(Command::Mask),
         "q" | "quit" => Ok(Command::Quit),
         "" => Err(format!("commands: {HELP}")),
         _ => Err(format!("unknown command '{line}'; commands: {HELP}")),
@@ -84,6 +104,60 @@ pub fn parse_range(arg: &str) -> Result<RangeMode, String> {
     }
 }
 
+/// `off`, or conditions joined by `and`: `mask_ice != 2`, `basins = 1,3`, `H_ice < 10`.
+pub fn parse_mask(arg: &str) -> Result<Option<Vec<MaskCond>>, String> {
+    match arg.trim() {
+        "off" | "none" => return Ok(None),
+        "" => return Err("mask: expected VAR OP VALUES, e.g. mask_ice != 2, or off".into()),
+        _ => {}
+    }
+    arg.split(" and ")
+        .map(parse_cond)
+        .collect::<Result<_, _>>()
+        .map(Some)
+}
+
+fn parse_cond(text: &str) -> Result<MaskCond, String> {
+    // Two-character operators first, so `<=` is not read as `<`.
+    const OPS: [(&str, Op); 7] = [
+        ("!=", Op::Ne),
+        ("<=", Op::Le),
+        (">=", Op::Ge),
+        ("==", Op::Eq),
+        ("=", Op::Eq),
+        ("<", Op::Lt),
+        (">", Op::Gt),
+    ];
+    let bad = || {
+        format!(
+            "mask: cannot read '{}'; expected VAR OP VALUES",
+            text.trim()
+        )
+    };
+    let (pos, sym, op) = OPS
+        .iter()
+        .filter_map(|&(sym, op)| text.find(sym).map(|p| (p, sym, op)))
+        .min_by_key(|&(p, sym, _)| (p, std::cmp::Reverse(sym.len())))
+        .ok_or_else(bad)?;
+    let var = text[..pos].trim();
+    let values: Vec<f32> = text[pos + sym.len()..]
+        .split(',')
+        .map(|v| v.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| bad())?;
+    if var.is_empty() || var.contains(char::is_whitespace) {
+        return Err(bad());
+    }
+    if values.len() > 1 && !matches!(op, Op::Eq | Op::Ne) {
+        return Err(format!("mask: '{}' takes one value", sym));
+    }
+    Ok(MaskCond {
+        var: var.to_string(),
+        op,
+        values,
+    })
+}
+
 /// Index along a dimension of `len` steps for `sel`, given its coordinate values.
 pub fn time_index(sel: TimeSel, len: usize, coord: Option<&[f32]>) -> Result<usize, String> {
     if len == 0 {
@@ -114,6 +188,39 @@ pub fn time_index(sel: TimeSel, len: usize, coord: Option<&[f32]>) -> Result<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_masks() {
+        let c = |var: &str, op, values: &[f32]| MaskCond {
+            var: var.into(),
+            op,
+            values: values.to_vec(),
+        };
+        assert_eq!(
+            parse_mask("mask_ice != 2"),
+            Ok(Some(vec![c("mask_ice", Op::Ne, &[2.0])]))
+        );
+        assert_eq!(
+            parse_mask("basins=1, 3"),
+            Ok(Some(vec![c("basins", Op::Eq, &[1.0, 3.0])]))
+        );
+        assert_eq!(
+            parse_mask("H_ice <= 10 and z_bed>-100"),
+            Ok(Some(vec![
+                c("H_ice", Op::Le, &[10.0]),
+                c("z_bed", Op::Gt, &[-100.0])
+            ]))
+        );
+        assert_eq!(
+            parse_mask("ice.nc:H == 0"),
+            Ok(Some(vec![c("ice.nc:H", Op::Eq, &[0.0])]))
+        );
+        assert_eq!(parse_mask("off"), Ok(None));
+        assert!(parse_mask("H_ice < 1,2").is_err());
+        assert!(parse_mask("H_ice 3").is_err());
+        assert!(parse_mask("< 3").is_err());
+        assert_eq!(parse("mask off"), Ok(Command::Mask(None)));
+    }
 
     #[test]
     fn parses_commands() {
