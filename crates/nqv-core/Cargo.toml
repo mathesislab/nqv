@@ -1,0 +1,9 @@
+[package]
+name = "nqv-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+netcdf-reader = "0.13.0"
