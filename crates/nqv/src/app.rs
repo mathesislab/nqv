@@ -7,7 +7,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEve
 use image::{DynamicImage, RgbaImage};
 use nqv_core::{
     Catalog, Kind, RangeEstimate, Series, SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at,
-    finite_range, fit_size, netcdf_files, range, series, value, view,
+    fit_size, netcdf_files, range, series, series_range, value, view,
 };
 use nqv_render::{CMAPS, Norm, Rgba, colorize};
 use ratatui::DefaultTerminal;
@@ -608,7 +608,7 @@ impl App {
         match series(&self.cat, &spec) {
             Err(e) => (Plot::Error(format!("{e:#}")), None, None),
             Ok(s) => {
-                let (min, max) = finite_range(&s.y).unwrap_or((f32::NAN, f32::NAN));
+                let (min, max) = series_range(&self.cat, &spec, &s).unwrap_or((f32::NAN, f32::NAN));
                 let exact = s.y.len() == self.var_info().dims[along].len;
                 let norm = self.norm(min, max);
                 (

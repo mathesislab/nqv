@@ -205,6 +205,15 @@ impl Catalog {
         Ok(cat)
     }
 
+    /// In a comparison showing A or B, the other one: their colour ranges are shared.
+    pub fn other_side(&self) -> Option<Show> {
+        match (self.compare, self.show) {
+            (true, Show::A) => Some(Show::B),
+            (true, Show::B) => Some(Show::A),
+            _ => None,
+        }
+    }
+
     /// File name of a source, with its folder when another source has the same file
     /// name; in a comparison "a.nc - b.nc" when the names differ.
     pub fn label(&self, source: usize) -> String {
@@ -286,11 +295,22 @@ impl Catalog {
         count: &[usize],
         stride: &[usize],
     ) -> Result<Vec<f32>> {
+        self.read_as(self.show, r, start, count, stride)
+    }
+
+    /// `read` with `show` given instead of taken from the catalog.
+    pub fn read_as(
+        &self,
+        show: Show,
+        r: &VarRef,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<Vec<f32>> {
         let var = self.var(r)?;
         let s = &self.sources[r.source];
         let a = || s.reader.read_slice(&r.name, start, count, stride);
-        if !self.compare || self.show == Show::A || (self.show == Show::Diff && var.is_coordinate())
-        {
+        if !self.compare || show == Show::A || (show == Show::Diff && var.is_coordinate()) {
             return a();
         }
         let Some(o) = &s.other else {
@@ -311,7 +331,7 @@ impl Catalog {
             );
         }
         let b = o.reader.read_slice(&r.name, start, count, stride)?;
-        if self.show == Show::B {
+        if show == Show::B {
             return Ok(b);
         }
         Ok(a()?.iter().zip(&b).map(|(x, y)| x - y).collect())

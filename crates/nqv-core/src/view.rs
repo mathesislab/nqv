@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail, ensure};
 
-use crate::{Catalog, DimInfo, Kind, VarInfo, VarRef};
+use crate::{Catalog, DimInfo, Kind, Show, VarInfo, VarRef};
 
 /// A map view: a variable, one index per dimension, and the output size in pixels.
 /// Indices at the two map dimensions are ignored.
@@ -150,6 +150,10 @@ impl Sampling {
 /// Read the map slice in `spec` with a stride matched to the output size, then
 /// resample to exactly `spec.size` by nearest neighbour.
 pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
+    view_as(cat, spec, cat.show)
+}
+
+fn view_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<Raster> {
     let var = cat.var(&spec.var)?;
     let s = Sampling::new(cat, &spec.var, var, spec.size)?;
     let (y, x, my, mx) = (s.y, s.x, s.my, s.mx);
@@ -160,7 +164,7 @@ pub fn view(cat: &Catalog, spec: &ViewSpec) -> Result<Raster> {
     let mut stride = vec![1; var.dims.len()];
     (start[y], count[y], stride[y]) = (0, my, s.sy);
     (start[x], count[x], stride[x]) = (0, mx, s.sx);
-    let data = cat.read(&spec.var, &start, &count, &stride)?;
+    let data = cat.read_as(show, &spec.var, &start, &count, &stride)?;
     ensure!(
         data.len() == my * mx,
         "{}: read {} values, expected {}",
@@ -203,8 +207,22 @@ pub fn cell_at(cat: &Catalog, spec: &ViewSpec, px: (u32, u32)) -> Option<(usize,
     Some((s.row(r) * s.sy, s.col(c) * s.sx))
 }
 
-/// Colour range from a sample of at most 256 x 256 points of the map slice.
+/// Colour range from a sample of at most 256 x 256 points of the map slice. When a
+/// comparison shows A or B, the range covers both, so their colours compare directly.
 pub fn range(cat: &Catalog, spec: &ViewSpec) -> Result<RangeEstimate> {
+    let own = range_as(cat, spec, cat.show)?;
+    let other = cat.other_side().and_then(|s| range_as(cat, spec, s).ok());
+    Ok(match other {
+        Some(o) => RangeEstimate {
+            min: own.min.min(o.min),
+            max: own.max.max(o.max),
+            exact: own.exact && o.exact,
+        },
+        None => own,
+    })
+}
+
+fn range_as(cat: &Catalog, spec: &ViewSpec, show: Show) -> Result<RangeEstimate> {
     const N: usize = 256;
     let var = cat.var(&spec.var)?;
     let Kind::Map { y, x } = var.kind() else {
@@ -212,12 +230,13 @@ pub fn range(cat: &Catalog, spec: &ViewSpec) -> Result<RangeEstimate> {
     };
     let (ny, nx) = (var.dims[y].len, var.dims[x].len);
     let size = (nx.min(N) as u32, ny.min(N) as u32);
-    let sample = view(
+    let sample = view_as(
         cat,
         &ViewSpec {
             size,
             ..spec.clone()
         },
+        show,
     )?;
     let (min, max) = finite_range(&sample.values).unwrap_or((f32::NAN, f32::NAN));
     Ok(RangeEstimate {
@@ -229,6 +248,24 @@ pub fn range(cat: &Catalog, spec: &ViewSpec) -> Result<RangeEstimate> {
 
 /// Values along `spec.along`, strided to about `spec.max_points`.
 pub fn series(cat: &Catalog, spec: &SeriesSpec) -> Result<Series> {
+    series_as(cat, spec, cat.show)
+}
+
+/// Range of the finite values of `s`, the series for `spec`; when a comparison shows A
+/// or B, widened to cover the other one too.
+pub fn series_range(cat: &Catalog, spec: &SeriesSpec, s: &Series) -> Option<(f32, f32)> {
+    let own = finite_range(&s.y);
+    let other = cat
+        .other_side()
+        .and_then(|show| series_as(cat, spec, show).ok())
+        .and_then(|o| finite_range(&o.y));
+    match (own, other) {
+        (Some(a), Some(b)) => Some((a.0.min(b.0), a.1.max(b.1))),
+        (a, b) => a.or(b),
+    }
+}
+
+fn series_as(cat: &Catalog, spec: &SeriesSpec, show: Show) -> Result<Series> {
     let var = cat.var(&spec.var)?;
     ensure!(
         spec.along < var.dims.len(),
@@ -245,7 +282,7 @@ pub fn series(cat: &Catalog, spec: &SeriesSpec) -> Result<Series> {
     let mut count = vec![1; var.dims.len()];
     let mut stride = vec![1; var.dims.len()];
     (start[spec.along], count[spec.along], stride[spec.along]) = (0, n, st);
-    let y = cat.read(&spec.var, &start, &count, &stride)?;
+    let y = cat.read_as(show, &spec.var, &start, &count, &stride)?;
     let x = match cat.coord_var(spec.var.source, dim) {
         Some(_) => {
             let c = VarRef {
@@ -420,6 +457,22 @@ mod tests {
         assert_eq!(view(&c, &spec).unwrap().values[0], 120.0);
         c.show = Show::B;
         assert_eq!(view(&c, &spec).unwrap().values[0], 125.0);
+        // A and B share their range: A is 100..=123, B 105..=128.
+        let r = range(&c, &spec).unwrap();
+        assert_eq!((r.min, r.max), (100.0, 128.0));
+        c.show = Show::A;
+        let s = SeriesSpec {
+            var: vr("f"),
+            along: 0,
+            index: vec![0, 0, 0],
+            max_points: 10,
+        };
+        let series_a = series(&c, &s).unwrap();
+        assert_eq!(series_range(&c, &s, &series_a), Some((0.0, 105.0)));
+        c.show = Show::Diff;
+        let r = range(&c, &spec).unwrap();
+        assert_eq!((r.min, r.max), (-5.0, -5.0));
+        c.show = Show::B;
         assert_eq!(value(&c, &vr("f"), &[1, 2, 3]).unwrap(), 128.0);
     }
 

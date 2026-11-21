@@ -12,7 +12,7 @@ pub use crate::catalog::{
 pub use crate::netcdf::NetcdfReader;
 pub use crate::view::{
     RangeEstimate, Raster, Series, SeriesSpec, ViewSpec, cell_at, finite_range, fit_size, range,
-    series, value, view,
+    series, series_range, value, view,
 };
 
 /// How a variable is shown, from its dimensions of length other than 1.
