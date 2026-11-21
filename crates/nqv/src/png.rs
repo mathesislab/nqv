@@ -356,8 +356,8 @@ pub struct LinePlot<'a> {
     pub title: String,
     pub subtitle: String,
     pub series: &'a Series,
-    /// y axis range.
-    pub y: (f32, f32),
+    /// y axis range and scale.
+    pub norm: Norm,
     pub xlabel: String,
     pub ylabel: String,
 }
@@ -371,36 +371,47 @@ pub fn render_line(p: &LinePlot, size: (u32, u32)) -> RgbaImage {
     c.titles(&p.title, &p.subtitle);
     let xr = nqv_core::finite_range(&p.series.x).unwrap_or((0.0, 1.0));
     let (x0, x1) = widen(xr.0 as f64, xr.1 as f64);
-    let (y0, y1) = widen(p.y.0 as f64, p.y.1 as f64);
+    let (y0, y1) = widen(p.norm.min as f64, p.norm.max as f64);
     let px = |x: f64| LEFT as f64 + (x - x0) / (x1 - x0) * (w - 1) as f64;
-    let py = |y: f64| TOP as f64 + (y1 - y) / (y1 - y0) * (h - 1) as f64;
+    // Log scale: through the norm (values at or below zero are gaps); else linear.
+    let py = |y: f64| match p.norm.log {
+        true if y > 0.0 => TOP as f64 + (1.0 - p.norm.apply(y as f32) as f64) * (h - 1) as f64,
+        true => f64::NAN,
+        false => TOP as f64 + (y1 - y) / (y1 - y0) * (h - 1) as f64,
+    };
     for t in nice_ticks(x0, x1, 6) {
         let x = px(t).round() as u32;
         c.rect(x, TOP, 1, h, LIGHT);
         c.rect(x, TOP + h, 1, 6, BLACK);
         c.text_centred(x as i64, (TOP + h + 8) as i64, &fmt(t as f32), BLACK);
     }
-    for t in nice_ticks(y0, y1, 6) {
-        let y = py(t).round() as u32;
+    let yticks: Vec<(f64, String)> = match p.norm.log {
+        true => bar_ticks(&p.norm)
+            .into_iter()
+            .map(|(t, l)| (TOP as f64 + (1.0 - t as f64) * (h - 1) as f64, l))
+            .collect(),
+        false => nice_ticks(y0, y1, 6)
+            .into_iter()
+            .map(|t| (py(t), fmt(t as f32)))
+            .collect(),
+    };
+    for (y, label) in yticks {
+        let y = y.round() as u32;
         c.rect(LEFT, y, w, 1, LIGHT);
         c.rect(LEFT - 6, y, 6, 1, BLACK);
-        c.text_right(
-            (LEFT - 10) as i64,
-            (y - GLYPH / 2) as i64,
-            &fmt(t as f32),
-            BLACK,
-        );
+        c.text_right((LEFT - 10) as i64, (y - GLYPH / 2) as i64, &label, BLACK);
     }
     c.frame(LEFT, TOP, w, h, BLACK);
     // Points outside a fixed y range are cut at the axes box.
     c.clip = Some((LEFT as i64, TOP as i64, (LEFT + w) as i64, (TOP + h) as i64));
     let mut prev: Option<(i64, i64)> = None;
     for (&x, &y) in p.series.x.iter().zip(&p.series.y) {
-        if !(x.is_finite() && y.is_finite()) {
+        let (fx, fy) = (px(x as f64), py(y as f64));
+        if !(fx.is_finite() && fy.is_finite()) {
             prev = None;
             continue;
         }
-        let pt = (px(x as f64).round() as i64, py(y as f64).round() as i64);
+        let pt = (fx.round() as i64, fy.round() as i64);
         match prev {
             Some(q) => c.line(q, pt, LINE),
             None => c.line(pt, pt, LINE),
@@ -465,7 +476,7 @@ mod tests {
             title: String::new(),
             subtitle: String::new(),
             series: &s,
-            y: (0.0, 10.0),
+            norm: Norm::linear(0.0, 10.0),
             xlabel: String::new(),
             ylabel: String::new(),
         };

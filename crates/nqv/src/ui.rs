@@ -238,14 +238,28 @@ fn draw_line(
     fg: Color,
 ) {
     let [xtitle, ytitle] = titles;
+    // On a log scale the y values are plotted as log10, values at or below zero left out.
+    let ty = |y: f32| match n.log {
+        true if y > 0.0 => (y as f64).log10(),
+        true => f64::NAN,
+        false => y as f64,
+    };
     let pts: Vec<(f64, f64)> =
         s.x.iter()
             .zip(&s.y)
+            .map(|(&x, &y)| (x as f64, ty(y)))
             .filter(|(x, y)| x.is_finite() && y.is_finite())
-            .map(|(&x, &y)| (x as f64, y as f64))
             .collect();
     let (x0, x1) = padded(finite_range(&s.x));
-    let (y0, y1) = padded(Some((n.min, n.max)));
+    let (y0, y1) = match n.log {
+        true => (ty(n.min), ty(n.max)),
+        false => padded(Some((n.min, n.max))),
+    };
+    let ylabel = |v: f64| match n.log {
+        true => fmt(10f64.powf(v) as f32),
+        false => fmt(v as f32),
+    };
+    let ylabels = vec![ylabel(y0), ylabel(0.5 * (y0 + y1)), ylabel(y1)];
     let labels = |a: f64, b: f64| {
         let m = 0.5 * (a + b);
         vec![fmt(a as f32), fmt(m as f32), fmt(b as f32)]
@@ -273,7 +287,7 @@ fn draw_line(
             Axis::default()
                 .title(ytitle)
                 .bounds([y0, y1])
-                .labels(labels(y0, y1)),
+                .labels(ylabels),
         );
     f.render_widget(chart, area);
 }

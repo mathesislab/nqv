@@ -729,14 +729,6 @@ impl App {
         }
     }
 
-    /// Y range of a line plot: as for maps, but a log scale (maps only) counts as auto.
-    fn series_norm(&self, min: f32, max: f32) -> Norm {
-        match self.range_mode {
-            RangeMode::Log(_) => Norm::linear(min, max),
-            _ => self.norm(min, max),
-        }
-    }
-
     /// Carry out a command from the `:` line or the command line; true means quit.
     pub fn apply(&mut self, cmd: Command) -> Result<bool, String> {
         match cmd {
@@ -1103,13 +1095,13 @@ impl App {
                 };
                 let s = series(&self.cat, &spec)?;
                 let (lo, hi) = series_range(&self.cat, &spec, &s).unwrap_or((f32::NAN, f32::NAN));
-                let norm = self.series_norm(lo, hi);
+                let norm = self.norm(lo, hi);
                 png::render_line(
                     &png::LinePlot {
                         title,
                         subtitle,
                         series: &s,
-                        y: (norm.min, norm.max),
+                        norm,
                         xlabel: label(along),
                         ylabel: v.units.clone().unwrap_or_default(),
                     },
@@ -1207,7 +1199,7 @@ impl App {
             Ok(s) => {
                 let (min, max) = series_range(&self.cat, &spec, &s).unwrap_or((f32::NAN, f32::NAN));
                 let exact = s.y.len() == self.var_info().dims[along].len;
-                let norm = self.series_norm(min, max);
+                let norm = self.norm(min, max);
                 (
                     Plot::Line(s),
                     Some(RangeEstimate { min, max, exact }),
