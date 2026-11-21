@@ -445,13 +445,13 @@ pub fn render_map(p: &MapPlot) -> RgbaImage {
             right_end = left + text_width(label) as i64;
         }
     }
-    let mut last_y = i64::MIN;
+    let mut last_y: Option<u32> = None;
     for (y, label) in &p.yticks {
         let y = TOP + y;
         c.rect(LEFT - 6, y, 6, 1, BLACK);
-        if (y as i64 - last_y).abs() > (GLYPH + 4) as i64 {
+        if last_y.is_none_or(|l| l.abs_diff(y) > GLYPH + 4) {
             c.text_right((LEFT - 10) as i64, (y - GLYPH / 2) as i64, label, BLACK);
-            last_y = y as i64;
+            last_y = Some(y);
         }
     }
     c.text_right(
@@ -720,6 +720,31 @@ mod tests {
             .flat_map(|y| (LEFT..LEFT + 100).map(move |x| (x, y)))
             .any(|(x, y)| *img.get_pixel(x, y) == LINE);
         assert!(!above);
+    }
+
+    /// Axis labels on both edges, some too close to draw (debug builds once panicked).
+    #[test]
+    fn map_with_crowded_ticks() {
+        let image = colorize(40, 30, &[1.0; 1200], &Norm::linear(0.0, 2.0), &CMAPS[0]);
+        let ticks = |n: u32| {
+            (0..n)
+                .map(|i| (i * 3, format!("{i}°N")))
+                .collect::<Vec<_>>()
+        };
+        let img = render_map(&MapPlot {
+            title: "t".into(),
+            subtitle: String::new(),
+            image: &image,
+            xticks: ticks(10),
+            yticks: ticks(10),
+            xlabel: String::new(),
+            ylabel: String::new(),
+            norm: Norm::linear(0.0, 2.0),
+            cmap: &CMAPS[0],
+            extend: (false, false),
+            contours: &[],
+        });
+        assert!(img.width() > 40 && img.height() > 30);
     }
 
     #[test]
