@@ -8,7 +8,6 @@ license.workspace = true
 anyhow = "1.0.104"
 clap = { version = "4.6.9", features = ["derive"] }
 crossterm = "0.29.0"
-font8x8 = "0.3.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 nqv-core = { version = "0.1.0", path = "../nqv-core" }
 nqv-render = { version = "0.1.0", path = "../nqv-render" }

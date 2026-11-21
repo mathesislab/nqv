@@ -1086,7 +1086,6 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
- "font8x8",
  "image",
  "nqv-core",
  "nqv-render",
@@ -1112,6 +1111,8 @@ name = "nqv-session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "font8x8",
+ "image",
  "nqv-core",
  "nqv-render",
 ]

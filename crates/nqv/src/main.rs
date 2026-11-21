@@ -2,7 +2,6 @@
 
 mod app;
 mod browser;
-mod png;
 mod ui;
 
 use std::io::stdout;
@@ -244,14 +243,14 @@ fn main() -> Result<()> {
         }
     };
     if let Some(png) = &args.png {
-        let Some(mut app) = app else {
+        let Some(app) = app else {
             bail!("--png needs a file to read");
         };
         let size = parse_size(&args.size)?;
         if let Some(m) = &app.message {
             eprintln!("note: {m}");
         }
-        println!("{}", app.write_png(png, size)?);
+        println!("{}", app.s.write_png(png, size)?);
         return Ok(());
     }
 

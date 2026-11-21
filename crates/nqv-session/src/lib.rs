@@ -4,7 +4,9 @@
 
 pub mod backend;
 pub mod command;
+pub mod format;
 pub mod fuzzy;
+pub mod png;
 pub mod recipe;
 pub mod session;
 

@@ -6,7 +6,14 @@ use image::{Rgba as Px, RgbaImage};
 use nqv_core::{ContourLine, Series, nice_ticks};
 use nqv_render::{Cmap, Norm, Rgba};
 
-use crate::ui::fmt;
+use std::path::Path;
+
+use anyhow::{Result, bail};
+use nqv_core::{Kind, Segment, Show, fit_size};
+use nqv_render::{CMAPS, colorize, draw_lines, extends};
+
+use crate::format::{dim_at, fmt};
+use crate::session::Session;
 
 /// Text scale: glyphs are 8 * SCALE pixels.
 const SCALE: u32 = 2;
@@ -23,6 +30,143 @@ const RIGHT: u32 = 56;
 const TOP: u32 = 92;
 const BELOW_MAP: u32 = 104;
 const BELOW_LINE: u32 = 72;
+
+impl Session {
+    /// Write the current view as a PNG of at most `max` pixels: a map with a colour bar
+    /// (data aspect kept, small grids scaled up), or a line plot. Returns a summary.
+    pub fn write_png(&self, path: &Path, max: (u32, u32)) -> Result<String> {
+        let o = self.overlays();
+        if let Some(e) = &o.mask_error {
+            bail!("mask: {e}");
+        }
+        if let Some(e) = &o.contour_error {
+            bail!("contour: {e}");
+        }
+        let s = self;
+        let v = s.var_info().clone();
+        let src = s.var.source;
+        let info = s.info();
+        let label = |k: usize| {
+            let d = &v.dims[k];
+            match info.coord_var(src, d).and_then(|c| c.units.clone()) {
+                Some(u) => format!("{} [{u}]", d.name),
+                None => d.name.clone(),
+            }
+        };
+        let title = format!(
+            "{}:{}{}  {}",
+            info.label(src),
+            v.name,
+            v.units
+                .as_ref()
+                .map(|u| format!(" [{u}]"))
+                .unwrap_or_default(),
+            v.long_name.as_deref().unwrap_or("")
+        );
+        let mut sub: Vec<String> = v
+            .step_dims()
+            .iter()
+            .map(|&k| dim_at(&v.dims[k], s.index[k], s.coord_at(k, s.index[k])))
+            .collect();
+        if info.compare {
+            sub.push(match info.show {
+                Show::Diff => "A - B".into(),
+                Show::A => "A".into(),
+                Show::B => "B".into(),
+            });
+        }
+        if !s.mask.is_empty() {
+            let m: Vec<String> = s.mask.iter().map(|c| c.text()).collect();
+            sub.push(format!("mask: {}", m.join(" and ")));
+        }
+        if let (Some(c), Kind::Map { .. }) = (&s.contour, v.kind()) {
+            sub.push(format!("contours: {}", c.text()));
+        }
+        let subtitle = sub.join("   ");
+        let cmap = &CMAPS[s.cmap];
+        let img = match v.kind() {
+            Kind::Map { y, x } => {
+                let area = map_area(max);
+                let size = fit_size(v.dims[x].len.max(1), v.dims[y].len.max(1), area.0, area.1);
+                let m = s.map(size, false)?;
+                // The sampled range, widened to every value drawn (it is all on the page).
+                let (lo, hi) =
+                    nqv_core::finite_range(&m.raster.values).unwrap_or((m.range.min, m.range.max));
+                let norm = s.norm(m.range.min.min(lo), m.range.max.max(hi));
+                let mut image = colorize(m.raster.w, m.raster.h, &m.raster.values, &norm, cmap);
+                let segments: Vec<Segment> = m
+                    .contours
+                    .iter()
+                    .flat_map(|l| l.segments.iter().copied())
+                    .collect();
+                draw_lines(&mut image, &segments);
+                // Round coordinate values (or 1-based indices) as ticks, placed linearly
+                // between the cells shown at the two ends of each edge (regular grids).
+                let at = |k: usize, i: usize| s.coord_at(k, i).unwrap_or((i + 1) as f32) as f64;
+                let ticks = |n: u32, end: &dyn Fn(u32) -> Option<f64>| {
+                    let (Some(a), Some(b)) = (end(0), end(n - 1)) else {
+                        return vec![];
+                    };
+                    nqv_core::nice_ticks(a.min(b), a.max(b), 5)
+                        .into_iter()
+                        .map(|t| {
+                            let p = if b == a {
+                                0.0
+                            } else {
+                                (t - a) / (b - a) * (n - 1) as f64
+                            };
+                            (p.round() as u32, fmt(t as f32))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let xticks = ticks(m.raster.w, &|p| {
+                    s.cell_at(&m.spec, (p, 0)).map(|c| at(x, c.1))
+                });
+                let yticks = ticks(m.raster.h, &|p| {
+                    s.cell_at(&m.spec, (0, p)).map(|c| at(y, c.0))
+                });
+                render_map(&MapPlot {
+                    title,
+                    subtitle,
+                    image: &image,
+                    xticks,
+                    yticks,
+                    xlabel: label(x),
+                    ylabel: label(y),
+                    norm,
+                    cmap,
+                    contours: &m.contours,
+                    extend: nqv_core::finite_range(&m.raster.values)
+                        .map_or((false, false), |(lo, hi)| extends(&norm, lo, hi)),
+                })
+            }
+            Kind::Series { along } => {
+                let d = s.series_at(s.index.clone(), along, max.0 as usize)?;
+                render_line(
+                    &LinePlot {
+                        title,
+                        subtitle,
+                        series: &d.series,
+                        norm: d.norm,
+                        xlabel: label(along),
+                        ylabel: v.units.clone().unwrap_or_default(),
+                    },
+                    max,
+                )
+            }
+            Kind::Scalar => bail!("--png: '{}' is a single value", v.name),
+        };
+        img.save_with_format(path, image::ImageFormat::Png)?;
+        Ok(format!(
+            "wrote {} ({}x{}): {}:{}",
+            path.display(),
+            img.width(),
+            img.height(),
+            info.label(src),
+            v.name
+        ))
+    }
+}
 
 /// Room left for the map image in a PNG of at most `max` pixels.
 pub fn map_area(max: (u32, u32)) -> (u32, u32) {
