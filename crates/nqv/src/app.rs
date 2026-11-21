@@ -16,6 +16,7 @@ use ratatui_image::{Resize, protocol::Protocol};
 
 use crate::Output;
 use crate::browser::{Action, Browser};
+use crate::fuzzy;
 use crate::ui;
 
 /// What the main area shows for one state and screen area.
@@ -691,18 +692,21 @@ fn default_var<'a>(vars: &'a [(VarRef, &VarInfo)]) -> Option<&'a VarRef> {
         .map(|(r, _)| r)
 }
 
-/// Data variables whose file label, name or long name contains `query` (case-insensitive).
+/// Data variables matching a picker query, best matches first (see `fuzzy`).
+/// `file:var` limits the list to files whose label matches `file`.
 pub fn filtered_vars<'a>(cat: &'a Catalog, query: &str) -> Vec<(VarRef, &'a VarInfo)> {
-    let q = query.to_lowercase();
-    let several = cat.sources.len() > 1;
-    cat.data_vars()
+    let (file_q, var_q) = fuzzy::split(query);
+    let mut hits: Vec<(u8, usize, (VarRef, &VarInfo))> = cat
+        .data_vars()
         .into_iter()
-        .filter(|(r, v)| {
-            v.name.to_lowercase().contains(&q)
-                || v.long_name
-                    .as_ref()
-                    .is_some_and(|l| l.to_lowercase().contains(&q))
-                || (several && cat.label(r.source).to_lowercase().contains(&q))
+        .filter(|(r, _)| file_q.is_none_or(|f| fuzzy::tier(f, &cat.label(r.source)).is_some()))
+        .filter_map(|(r, v)| {
+            let t = fuzzy::var_tier(var_q, &v.name, v.long_name.as_deref())?;
+            // Shorter names first within a tier; file order when nothing is typed.
+            let len = if var_q.is_empty() { 0 } else { v.name.len() };
+            Some((t, len, (r, v)))
         })
-        .collect()
+        .collect();
+    hits.sort_by_key(|h| (h.0, h.1));
+    hits.into_iter().map(|h| h.2).collect()
 }

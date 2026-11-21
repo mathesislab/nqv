@@ -384,7 +384,11 @@ fn draw_picker(f: &mut Frame, app: &App) {
         })
         .collect();
     let list = List::new(items)
-        .block(Block::bordered().title(format!(" variable: {}▏", p.query)))
+        .block(
+            Block::bordered()
+                .title(format!(" variable: {}▏ ", p.query))
+                .title_bottom(" type to filter (file:var limits files)  ↑↓ Enter  Esc ".dim()),
+        )
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
     let mut state = ListState::default().with_selected(Some(p.sel));
     f.render_widget(Clear, r);

@@ -26,7 +26,7 @@ In a comparison, variables missing in the second file, or with different dimensi
 |---|---|
 | ← → / Home End | first dimension not shown (usually time) |
 | ↑ ↓ | second dimension not shown (e.g. level) |
-| `v` | pick a variable (type to filter, Enter, Esc) |
+| `v` | pick a variable: type to filter (fuzzy: `hice` finds `H_ice`; `ice:` limits to files matching `ice`), ↑↓, Enter, Esc |
 | `c` | next colour map |
 | `r` | toggle range: auto / symmetric around 0 |
 | `d` | comparison: cycle A − B, A, B |

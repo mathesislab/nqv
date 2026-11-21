@@ -2,6 +2,7 @@
 
 mod app;
 mod browser;
+mod fuzzy;
 mod ui;
 
 use std::io::stdout;
