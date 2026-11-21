@@ -32,7 +32,8 @@ Everything the viewer shows can be set from the command line; each `:` command i
 | `:t VALUE`, `:t @INDEX` | `-t VALUE` | step along the first stepped dimension (usually time) |
 | `:at DIM=VALUE` | `--at DIM=VALUE` | any dimension (repeatable); map dimensions pick the clicked cell |
 | `:range MIN MAX`, `auto`, `sym`, `log [MIN MAX]` | `--range MIN,MAX`, `log,MIN,MAX` | colour range (y range for line plots); `log`: logarithmic colours, by default over at most four decades below the maximum |
-| `:cmap NAME` | `--cmap NAME` | colour map: viridis, RdBu_r, grays |
+| `:cmap NAME` | `--cmap NAME` | colour map: viridis, cividis, plasma, inferno, magma, RdBu_r, grays, jet |
+| `:cvd on\|off` | `--cvd` | colour-blind mode (also `NQV_CVD=1`): `c` cycles only maps suited to colour vision deficiencies (all but jet); choosing jet anyway gives a warning |
 | `:mask COND [and COND]`, `off` | `--mask "COND"` | hide where all conditions hold |
 | `:contour VAR [step=S\|n=N\|levels=A,B,..]`, `off` | `--contour "..."` | contour lines of another variable over the map |
 | `:recipe NAME` | `-r NAME` | apply a recipe (see below); `nqv --recipes` lists them |

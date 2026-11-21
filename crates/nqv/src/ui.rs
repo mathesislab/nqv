@@ -154,6 +154,17 @@ fn draw_help(f: &mut Frame) {
     lines.push(
         Line::raw("VALUE: coordinate value (1990, -21000)   @INDEX: 1-based, @-1 last").dim(),
     );
+    let maps: Vec<String> = CMAPS
+        .iter()
+        .map(|c| format!("{}{}", c.name, if c.cvd_safe { "*" } else { "" }))
+        .collect();
+    lines.push(
+        Line::raw(format!(
+            "colour maps: {}   (* suited to colour vision deficiencies)",
+            maps.join(" ")
+        ))
+        .dim(),
+    );
     let recipes: Vec<String> = crate::recipe::list().into_iter().map(|(n, _)| n).collect();
     if !recipes.is_empty() {
         lines.push(Line::raw(format!("recipes (:recipe NAME): {}", recipes.join(", "))).dim());
@@ -429,7 +440,15 @@ fn status_line(app: &App, out: &Output) -> Line<'static> {
         RangeMode::Log(None) => " log",
         RangeMode::Log(Some(_)) => " log fixed",
     };
-    s.push(Span::raw(format!("  {}{mode}  {}", CMAPS[app.cmap].name, out.name())).dim());
+    let c = &CMAPS[app.cmap];
+    s.push(Span::raw(format!("  {}{mode}", c.name)).dim());
+    if app.cvd {
+        s.push(match c.cvd_safe {
+            true => Span::raw(" cvd").dim(),
+            false => Span::raw(" (not cvd-friendly)").red(),
+        });
+    }
+    s.push(Span::raw(format!("  {}", out.name())).dim());
     Line::from(s)
 }
 

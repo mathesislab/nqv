@@ -10,7 +10,7 @@ use nqv_core::{
     SeriesSpec, Show, VarInfo, VarRef, ViewSpec, cell_at, check_contour, check_mask, contours,
     fit_size, masked, netcdf_files, range, series, series_range, value, view,
 };
-use nqv_render::{CMAPS, Norm, Rgba, braille_cells, colorize, draw_lines, extends};
+use nqv_render::{CMAPS, Norm, Rgba, braille_cells, cmap_index, colorize, draw_lines, extends};
 use ratatui::DefaultTerminal;
 use ratatui::layout::{Position, Rect, Size};
 use ratatui_image::{Resize, protocol::Protocol};
@@ -97,6 +97,8 @@ pub struct App {
     pub origin: Origin,
     /// Key and command overview, drawn over everything else.
     pub help: bool,
+    /// Colour-blind mode: `c` cycles only colour maps that suit colour vision deficiencies.
+    pub cvd: bool,
     pub cat: Catalog,
     pub var: VarRef,
     /// One index per dimension of `var`; entries at shown dimensions are unused.
@@ -172,6 +174,7 @@ impl App {
             contour_error: None,
             origin: Origin::default(),
             help: false,
+            cvd: std::env::var("NQV_CVD").is_ok_and(|v| !v.is_empty() && v != "0"),
             frame: None,
             probe: None,
             panel: None,
@@ -356,7 +359,7 @@ impl App {
                     sel: 0,
                 })
             }
-            KeyCode::Char('c') => self.cmap = (self.cmap + 1) % CMAPS.len(),
+            KeyCode::Char('c') => self.next_cmap(),
             KeyCode::Char('o') => {
                 let file = self.source_path();
                 self.browser = Some(Browser::new(&dir_of(&file), Some(&file)));
@@ -766,10 +769,7 @@ impl App {
             }
             Command::At(dim, pos) => self.set_at(&dim, pos)?,
             Command::Cmap(name) => {
-                let Some(i) = CMAPS
-                    .iter()
-                    .position(|c| c.name.eq_ignore_ascii_case(&name))
-                else {
+                let Some(i) = cmap_index(&name) else {
                     let names: Vec<&str> = CMAPS.iter().map(|c| c.name).collect();
                     return Err(format!(
                         "cmap: '{name}' unknown; one of {}",
@@ -777,6 +777,11 @@ impl App {
                     ));
                 };
                 self.cmap = i;
+                self.warn_cvd();
+            }
+            Command::Cvd(on) => {
+                self.cvd = on;
+                self.warn_cvd();
             }
             Command::Contour(c) => self.contour = c,
             Command::Recipe(name) => {
@@ -800,6 +805,28 @@ impl App {
             }
         }
         Ok(false)
+    }
+
+    /// Next colour map; in colour-blind mode only those suited to it.
+    fn next_cmap(&mut self) {
+        for k in 1..=CMAPS.len() {
+            let i = (self.cmap + k) % CMAPS.len();
+            if !self.cvd || CMAPS[i].cvd_safe {
+                self.cmap = i;
+                return;
+            }
+        }
+    }
+
+    /// In colour-blind mode, say so when the colour map does not suit it.
+    fn warn_cvd(&mut self) {
+        let c = &CMAPS[self.cmap];
+        if self.cvd && !c.cvd_safe {
+            self.message = Some(format!(
+                "{} is hard to read with colour vision deficiencies; c picks suitable maps",
+                c.name
+            ));
+        }
     }
 
     /// Position along dimension `dim`: a step for stepped dimensions, the clicked cell
@@ -1009,8 +1036,10 @@ impl App {
                     mask: self.active_mask.clone(),
                 };
                 let raster = view(&self.cat, &spec)?;
+                // The sampled range, widened to every value drawn (it is all on the page).
                 let rg = range(&self.cat, &spec)?;
-                let norm = self.norm(rg.min, rg.max);
+                let (lo, hi) = nqv_core::finite_range(&raster.values).unwrap_or((rg.min, rg.max));
+                let norm = self.norm(rg.min.min(lo), rg.max.max(hi));
                 let mut image = colorize(raster.w, raster.h, &raster.values, &norm, cmap);
                 let lines = self.contour_lines(&spec);
                 let segments: Vec<Segment> = lines
@@ -1237,8 +1266,8 @@ fn dir_of(file: &Path) -> PathBuf {
 /// diverging map around zero, plain fields on viridis with their own range.
 fn colour_defaults(show: Show) -> (usize, RangeMode) {
     match show {
-        Show::Diff => (1, RangeMode::Symmetric),
-        Show::A | Show::B => (0, RangeMode::Auto),
+        Show::Diff => (cmap_index("RdBu_r").unwrap_or(0), RangeMode::Symmetric),
+        Show::A | Show::B => (cmap_index("viridis").unwrap_or(0), RangeMode::Auto),
     }
 }
 

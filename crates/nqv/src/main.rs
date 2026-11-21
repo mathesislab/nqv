@@ -104,9 +104,13 @@ struct Args {
         help_heading = "Display"
     )]
     range: Option<String>,
-    /// Colour map: viridis, RdBu_r, grays
+    /// Colour map: viridis cividis plasma inferno magma RdBu_r grays jet
     #[arg(long, value_name = "NAME", help_heading = "Display")]
     cmap: Option<String>,
+    /// Colour-blind mode: suggest only colour maps suited to colour vision deficiencies
+    /// (also with NQV_CVD=1)
+    #[arg(long, help_heading = "Display")]
+    cvd: bool,
     /// Graphics output; default from $NQV_GFX, else detected
     #[arg(long, value_enum, help_heading = "Display")]
     gfx: Option<Gfx>,
@@ -244,6 +248,9 @@ fn main() -> Result<()> {
             bail!("--png needs a file to read");
         };
         let size = parse_size(&args.size)?;
+        if let Some(m) = &app.message {
+            eprintln!("note: {m}");
+        }
         println!("{}", app.write_png(png, size)?);
         return Ok(());
     }
@@ -255,7 +262,10 @@ fn main() -> Result<()> {
         execute!(stdout(), EnableMouseCapture)?;
         let app = match app {
             Some(app) => Some(app),
-            None => App::pick(&mut terminal, &std::env::current_dir()?)?,
+            None => App::pick(&mut terminal, &std::env::current_dir()?)?.map(|mut a| {
+                a.cvd |= args.cvd;
+                a
+            }),
         };
         match app {
             Some(mut app) => app.run(&mut terminal, out),
@@ -272,6 +282,9 @@ fn main() -> Result<()> {
 /// sets default colours), then positions, then colours and mask.
 fn commands(args: &Args) -> Result<Vec<Command>, String> {
     let mut cmds = vec![];
+    if args.cvd {
+        cmds.push(Command::Cvd(true));
+    }
     if let Some(r) = &args.recipe {
         cmds.extend(recipe::load(r)?);
     }

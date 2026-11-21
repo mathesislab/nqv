@@ -29,7 +29,7 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "cmap NAME",
         "--cmap NAME",
-        "colour map: viridis, RdBu_r, grays",
+        "colour map: viridis cividis plasma inferno magma RdBu_r grays jet",
     ),
     (
         "mask VAR OP VALUES [and ...] | off",
@@ -40,6 +40,11 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
         "contour VAR [step=S | n=N | levels=A,B,..] | off",
         "--contour \"...\"",
         "contour lines of VAR over the map (about 10 round levels by default)",
+    ),
+    (
+        "cvd on | off",
+        "--cvd",
+        "colour-blind mode: c cycles only maps suited to colour vision deficiencies",
     ),
     (
         "recipe NAME",
@@ -94,6 +99,8 @@ pub enum Command {
     /// Position along a named dimension.
     At(String, TimeSel),
     Cmap(String),
+    /// Colour-blind mode on or off.
+    Cvd(bool),
     Show(Show),
     Quit,
 }
@@ -137,7 +144,7 @@ impl MaskCond {
     }
 }
 
-pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
+pub const HELP: &str = "v NAME | t VALUE|@INDEX | at DIM=VALUE | range MIN MAX|auto|sym|log | cmap NAME | cvd on|off | mask VAR OP VALUES [and ...]|off | contour VAR [step=S|n=N|levels=..]|off | show diff|a|b | recipe NAME | save NAME | q   (? help)";
 
 /// Parse a command line such as `v H_ice`, `t 1990`, `t @-1`, `range -2 30`.
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -154,6 +161,11 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "save" if !arg.is_empty() => Ok(Command::Save(arg.to_string())),
         "at" => parse_at(arg).map(|(d, p)| Command::At(d, p)),
         "cmap" if !arg.is_empty() => Ok(Command::Cmap(arg.to_string())),
+        "cvd" => match arg {
+            "on" | "" => Ok(Command::Cvd(true)),
+            "off" => Ok(Command::Cvd(false)),
+            _ => Err(format!("cvd: expected on or off, got '{arg}'")),
+        },
         "show" => parse_show(arg).map(Command::Show),
         "q" | "quit" => Ok(Command::Quit),
         "" => Err(format!("commands: {HELP}")),

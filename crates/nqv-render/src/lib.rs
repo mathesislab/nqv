@@ -71,6 +71,8 @@ pub fn extends(n: &Norm, lo: f32, hi: f32) -> (bool, bool) {
 pub struct Cmap {
     pub name: &'static str,
     stops: &'static [[u8; 3]],
+    /// Readable with the common colour vision deficiencies (red-green, mostly).
+    pub cvd_safe: bool,
 }
 
 /// Colour of missing values.
@@ -78,6 +80,7 @@ pub const MISSING: [u8; 3] = [48, 48, 48];
 
 pub const VIRIDIS: Cmap = Cmap {
     name: "viridis",
+    cvd_safe: true,
     stops: &[
         [0x44, 0x01, 0x54],
         [0x47, 0x2c, 0x7a],
@@ -94,6 +97,7 @@ pub const VIRIDIS: Cmap = Cmap {
 /// Diverging blue (low) to red (high), white at the centre.
 pub const RDBU_R: Cmap = Cmap {
     name: "RdBu_r",
+    cvd_safe: true,
     stops: &[
         [0x05, 0x30, 0x61],
         [0x21, 0x66, 0xac],
@@ -111,10 +115,107 @@ pub const RDBU_R: Cmap = Cmap {
 
 pub const GRAYS: Cmap = Cmap {
     name: "grays",
+    cvd_safe: true,
     stops: &[[0, 0, 0], [255, 255, 255]],
 };
 
-pub const CMAPS: [Cmap; 3] = [VIRIDIS, RDBU_R, GRAYS];
+/// Blue to yellow, designed for colour vision deficiencies.
+pub const CIVIDIS: Cmap = Cmap {
+    name: "cividis",
+    cvd_safe: true,
+    stops: &[
+        [0x00, 0x22, 0x4e],
+        [0x12, 0x35, 0x70],
+        [0x3b, 0x49, 0x6c],
+        [0x57, 0x5d, 0x6d],
+        [0x70, 0x71, 0x73],
+        [0x8a, 0x86, 0x78],
+        [0xa5, 0x9c, 0x74],
+        [0xc3, 0xb3, 0x69],
+        [0xe1, 0xcc, 0x55],
+        [0xfe, 0xe8, 0x38],
+    ],
+};
+
+/// Perceptually uniform, blue to yellow through red.
+pub const PLASMA: Cmap = Cmap {
+    name: "plasma",
+    cvd_safe: true,
+    stops: &[
+        [0x0d, 0x08, 0x87],
+        [0x46, 0x03, 0x9f],
+        [0x72, 0x01, 0xa8],
+        [0x9c, 0x17, 0x9e],
+        [0xbd, 0x37, 0x86],
+        [0xd8, 0x57, 0x6b],
+        [0xed, 0x79, 0x53],
+        [0xfb, 0x9f, 0x3a],
+        [0xfd, 0xca, 0x26],
+        [0xf0, 0xf9, 0x21],
+    ],
+};
+
+/// Perceptually uniform, black to light yellow.
+pub const INFERNO: Cmap = Cmap {
+    name: "inferno",
+    cvd_safe: true,
+    stops: &[
+        [0x00, 0x00, 0x04],
+        [0x1b, 0x0c, 0x41],
+        [0x4a, 0x0c, 0x6b],
+        [0x78, 0x1c, 0x6d],
+        [0xa5, 0x2c, 0x60],
+        [0xcf, 0x44, 0x46],
+        [0xed, 0x69, 0x25],
+        [0xfb, 0x9b, 0x06],
+        [0xf7, 0xd1, 0x3d],
+        [0xfc, 0xff, 0xa4],
+    ],
+};
+
+/// Perceptually uniform, black to light pink.
+pub const MAGMA: Cmap = Cmap {
+    name: "magma",
+    cvd_safe: true,
+    stops: &[
+        [0x00, 0x00, 0x04],
+        [0x18, 0x0f, 0x3d],
+        [0x44, 0x0f, 0x76],
+        [0x72, 0x1f, 0x81],
+        [0x9e, 0x2f, 0x7f],
+        [0xcd, 0x40, 0x71],
+        [0xf1, 0x60, 0x5d],
+        [0xfd, 0x96, 0x68],
+        [0xfe, 0xc9, 0x8d],
+        [0xfc, 0xfd, 0xbf],
+    ],
+};
+
+/// The classic rainbow (as in ncview); not perceptually uniform, hard to read with
+/// colour vision deficiencies.
+pub const JET: Cmap = Cmap {
+    name: "jet",
+    cvd_safe: false,
+    stops: &[
+        [0x00, 0x00, 0x7f],
+        [0x00, 0x00, 0xff],
+        [0x00, 0x7f, 0xff],
+        [0x00, 0xff, 0xff],
+        [0x7f, 0xff, 0x7f],
+        [0xff, 0xff, 0x00],
+        [0xff, 0x7f, 0x00],
+        [0xff, 0x00, 0x00],
+        [0x7f, 0x00, 0x00],
+    ],
+};
+
+/// All colour maps, in the order `c` cycles through them.
+pub const CMAPS: [Cmap; 8] = [VIRIDIS, CIVIDIS, PLASMA, INFERNO, MAGMA, RDBU_R, GRAYS, JET];
+
+/// Index in `CMAPS` of the map called `name` (case-insensitive).
+pub fn cmap_index(name: &str) -> Option<usize> {
+    CMAPS.iter().position(|c| c.name.eq_ignore_ascii_case(name))
+}
 
 impl Cmap {
     /// Colour at `t` in [0, 1].
@@ -182,6 +283,15 @@ mod tests {
         assert_eq!(VIRIDIS.at(1.0), [0xfd, 0xe7, 0x25]);
         assert_eq!(RDBU_R.at(0.5), [0xf7, 0xf7, 0xf7]);
         assert_eq!(GRAYS.at(0.5), [128, 128, 128]);
+        assert_eq!(CIVIDIS.at(1.0), [0xfe, 0xe8, 0x38]);
+        assert_eq!(JET.at(0.5), [0x7f, 0xff, 0x7f]);
+        assert_eq!(cmap_index("rdbu_r"), Some(5));
+        assert!(
+            CMAPS
+                .iter()
+                .filter(|c| !c.cvd_safe)
+                .all(|c| c.name == "jet")
+        );
     }
 
     #[test]
