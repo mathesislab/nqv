@@ -129,6 +129,10 @@ const KEYS: &[(&str, &str)] = &[
     ),
     ("c / r", "next colour map / range: auto -> symmetric -> log"),
     (
+        "R",
+        "type a fixed range (:range MIN MAX, the current one to edit)",
+    ),
+    (
         "i",
         "interpolation: nearest <-> bilinear (smooth maps of coarse grids)",
     ),
@@ -585,7 +589,7 @@ fn help_line(app: &App) -> String {
             "click series  "
         };
     }
-    h += "v var  c cmap  r range  : cmd  ";
+    h += "v var  c cmap  r/R range  : cmd  ";
     if app.s.info().compare {
         h += "d A-B/A/B  ";
     }

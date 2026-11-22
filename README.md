@@ -71,6 +71,7 @@ Keys:
 | click | value at a map cell, and its series below the map; Esc closes |
 | `v` | variable picker: type to filter (fuzzy: `hice` finds `H_ice`; `ice:` limits to files matching `ice`), ↑↓, Enter, Esc |
 | `c` / `r` | next colour map / range: auto → symmetric → log → auto (also leaves a fixed range) |
+| `R` | type a fixed range: the `:` line with `range MIN MAX` of the colours shown, to edit |
 | `i` | interpolation: nearest ↔ bilinear |
 | `d` | comparison: A − B, A, B (A and B share one colour range) |
 | `o` / `O` | file browser (Enter open, Backspace up, `c` folder as collection) / current folder as a collection |

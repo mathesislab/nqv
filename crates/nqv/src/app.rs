@@ -106,6 +106,16 @@ pub struct App {
 }
 
 impl App {
+    /// `range MIN MAX` (or `range log MIN MAX`) of the colours drawn last.
+    fn range_prompt(&self) -> String {
+        let fmt = nqv_session::format::fmt;
+        match self.frame.as_ref().and_then(|f| f.norm.as_ref()) {
+            Some(n) if n.log => format!("range log {} {}", fmt(n.min), fmt(n.max)),
+            Some(n) => format!("range {} {}", fmt(n.min), fmt(n.max)),
+            None => "range ".into(),
+        }
+    }
+
     pub fn new(s: Session) -> Self {
         Self {
             message: s.startup_message(),
@@ -297,6 +307,8 @@ impl App {
             KeyCode::Char(']') => self.neighbour(1),
             KeyCode::Char('[') => self.neighbour(-1),
             KeyCode::Char('r') => self.s.cycle_range(),
+            // A fixed range to type: the `:` line with the current one to edit.
+            KeyCode::Char('R') => self.cmdline = Some(self.range_prompt()),
             KeyCode::Char(':') => self.cmdline = Some(String::new()),
             KeyCode::Char('?') => self.help = true,
             KeyCode::Char('p') => self.message = Some(self.s.command_line()),
