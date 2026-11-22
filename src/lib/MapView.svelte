@@ -16,6 +16,7 @@
     onhover,
     onerror,
     ondrawn,
+    onrange,
   }: {
     api: Api;
     view: ViewState;
@@ -25,6 +26,8 @@
     onerror: (e: string) => void;
     /** After each map drawn. */
     ondrawn?: () => void;
+    /** A fixed colour range typed at the colour bar's ends. */
+    onrange?: (min: number, max: number) => void;
   } = $props();
 
   let box: HTMLDivElement;
@@ -209,7 +212,7 @@
     <canvas class="overlay" bind:this={overlay}></canvas>
   </div>
   {#if map}
-    <Colorbar header={map.header} lut={colormaps[map.header.cmap].lut} />
+    <Colorbar header={map.header} lut={colormaps[map.header.cmap].lut} {onrange} />
     {#if statsLine}<div class="stats">{statsLine}</div>{/if}
   {/if}
 </div>

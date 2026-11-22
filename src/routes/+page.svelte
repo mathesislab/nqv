@@ -247,7 +247,7 @@
     <main class:with-series={view.kind === "map" && series}>
       {#if view.kind === "map"}
         <div class="plot">
-          <MapView {api} {view} {colormaps} onstate={setState} onhover={(t) => (hover = t)} onerror={(e) => (error = e)} ondrawn={showWindow} />
+          <MapView {api} {view} {colormaps} onstate={setState} onhover={(t) => (hover = t)} onerror={(e) => (error = e)} ondrawn={showWindow} onrange={(lo, hi) => run(`range ${view?.range_mode.startsWith("log") ? "log " : ""}${lo} ${hi}`)} />
         </div>
         {#if series}
           <div class="panel">
