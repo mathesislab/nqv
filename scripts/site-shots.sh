@@ -54,7 +54,7 @@ desktop() {
 /work/target/debug/nqv-desktop & app=\$!
 sleep 6
 PATH=/tmp/bin:\$PATH $nqv -g ${*@Q} &
-sleep 12; import -window root -crop 1280x860+0+0 /out/$name.png; kill \$app
+sleep 25; import -window root -crop 1280x860+0+0 /out/$name.png; kill \$app
 RUN
   chmod +x /tmp/desk.sh
   env HOME=/tmp/h WEBKIT_DISABLE_DMABUF_RENDERER=1 dbus-run-session -- \
