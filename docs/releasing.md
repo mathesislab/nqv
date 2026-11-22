@@ -29,7 +29,7 @@ HPC hosts still get the terminal viewer with `scripts/deploy.sh HOST` (built loc
 from the release:
 
 ```bash
-curl -L -o ~/bin/nqv https://github.com/mathesislab/nqv/releases/latest/download/nqv-linux-x86_64 && chmod +x ~/bin/nqv
+curl -fsSL https://mathesislab.github.io/nqv/install.sh | sh
 ```
 
 ## Updates of the desktop app

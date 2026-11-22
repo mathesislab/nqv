@@ -220,12 +220,14 @@
     </article>
     <article class="platform full">
       <h3>Terminal viewer</h3>
-      <p>One file, nothing to install. On an HPC system or any Linux (x86-64; <code>nqv-linux-aarch64</code> for
-        ARM):</p>
-      <pre><code>mkdir -p ~/bin
-curl -L -o ~/bin/nqv https://github.com/mathesislab/nqv/releases/latest/download/nqv-linux-x86_64
-chmod +x ~/bin/nqv</code></pre>
-      <p>On a Mac, <code>nqv-macos-aarch64</code> the same way.</p>
+      <p>One file, nothing else to install. On an HPC system, any Linux (x86-64, ARM) or a Mac with Apple
+        silicon:</p>
+      <pre><code>curl -fsSL https://mathesislab.github.io/nqv/install.sh | sh</code></pre>
+      <p>It puts <code>nqv</code> in <code>~/bin</code> (or <code>$NQV_DEST</code>) and says if that is not on
+        your <code>PATH</code>; run it again to update. <code>NQV_VERSION=v0.3.0</code> installs a given
+        release. Or download <code>nqv-linux-x86_64</code>, <code>nqv-linux-aarch64</code> or
+        <code>nqv-macos-aarch64</code> from the <a href="https://github.com/mathesislab/nqv/releases/latest">latest
+        release</a> and make it executable.</p>
     </article>
   </div>
   <p class="more">Files on a cluster need ssh to log in without a prompt (a key in ssh-agent) and nqv there, of

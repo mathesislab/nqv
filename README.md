@@ -8,10 +8,11 @@ Website and downloads: <https://mathesislab.github.io/nqv/>. Shows 2D slices of 
 
 From the [latest release](https://github.com/mathesislab/nqv/releases/latest):
 
-- terminal viewer, one static file: `nqv-linux-x86_64`, `nqv-linux-aarch64` (HPC systems, any Linux), `nqv-macos-aarch64`; e.g.
+- terminal viewer, one static file (HPC systems, any Linux on x86-64 or ARM, Macs with Apple silicon):
   ```bash
-  curl -L -o ~/bin/nqv https://github.com/mathesislab/nqv/releases/latest/download/nqv-linux-x86_64 && chmod +x ~/bin/nqv
+  curl -fsSL https://mathesislab.github.io/nqv/install.sh | sh
   ```
+  It installs the build for the machine (`nqv-linux-x86_64`, `nqv-linux-aarch64`, `nqv-macos-aarch64`) in `~/bin`, or `$NQV_DEST`; `NQV_VERSION=v0.3.0` for a given release; run again to update. The script is [site/install.sh](site/install.sh).
 - desktop app: `nqv-desktop-macos-aarch64.dmg`, `nqv-desktop-linux-amd64.AppImage` or `.deb` (it updates itself when asked).
 
 Or build it (below).
